@@ -1,26 +1,27 @@
 // Finds Bible references in spoken or typed text.
-// Handles: "John 3:16", "Romans chapter eight verse twenty eight", "first Corinthians 13 verses 4 to 7", "Psalm twenty three"
+// Handles: "John 3:16", "Romans chapter eight verse twenty eight", "first Corinthians 13 verses 4 to 7",
+// "Psalm twenty three", "Matthew five and verse three", plus common mis-hearings (roman, galations...).
 
 const BOOKS = [
   ["Genesis"], ["Exodus"], ["Leviticus"], ["Numbers"], ["Deuteronomy"], ["Joshua"], ["Judges"], ["Ruth"],
   ["1 Samuel"], ["2 Samuel"], ["1 Kings"], ["2 Kings"], ["1 Chronicles"], ["2 Chronicles"],
-  ["Ezra"], ["Nehemiah"], ["Esther"], ["Job"], ["Psalms", "psalm", "psalms"], ["Proverbs"],
-  ["Ecclesiastes"], ["Song of Solomon", "song of songs", "song of solomon"], ["Isaiah"], ["Jeremiah"],
-  ["Lamentations"], ["Ezekiel"], ["Daniel"], ["Hosea"], ["Joel"], ["Amos"], ["Obadiah"], ["Jonah"],
-  ["Micah"], ["Nahum"], ["Habakkuk"], ["Zephaniah"], ["Haggai"], ["Zechariah"], ["Malachi"],
-  ["Matthew"], ["Mark"], ["Luke"], ["John"], ["Acts"], ["Romans"],
-  ["1 Corinthians"], ["2 Corinthians"], ["Galatians"], ["Ephesians"], ["Philippians"], ["Colossians"],
+  ["Ezra"], ["Nehemiah"], ["Esther"], ["Job"], ["Psalms", "psalm"], ["Proverbs", "proverb"],
+  ["Ecclesiastes"], ["Song of Solomon", "song of songs", "songs of solomon"], ["Isaiah", "isiah"], ["Jeremiah"],
+  ["Lamentations"], ["Ezekiel", "ezekial"], ["Daniel"], ["Hosea"], ["Joel"], ["Amos"], ["Obadiah"], ["Jonah"],
+  ["Micah"], ["Nahum"], ["Habakkuk", "habakuk"], ["Zephaniah"], ["Haggai"], ["Zechariah", "zachariah"], ["Malachi"],
+  ["Matthew", "mathew"], ["Mark"], ["Luke"], ["John"], ["Acts"], ["Romans", "roman"],
+  ["1 Corinthians", "1 corinthian"], ["2 Corinthians", "2 corinthian"], ["Galatians", "galations"],
+  ["Ephesians"], ["Philippians", "phillipians"], ["Colossians", "colosians"],
   ["1 Thessalonians"], ["2 Thessalonians"], ["1 Timothy"], ["2 Timothy"], ["Titus"], ["Philemon"],
   ["Hebrews"], ["James"], ["1 Peter"], ["2 Peter"], ["1 John"], ["2 John"], ["3 John"], ["Jude"],
-  ["Revelation", "revelation", "revelations"],
+  ["Revelation", "revelations"],
 ];
 
 const ALIASES = [];
 for (const [canon, ...extra] of BOOKS) {
-  const names = new Set([canon.toLowerCase(), ...extra]);
-  for (const n of names) ALIASES.push([n, canon]);
+  for (const n of new Set([canon.toLowerCase(), ...extra])) ALIASES.push([n, canon]);
 }
-ALIASES.sort((a, b) => b[0].length - a[0].length);
+ALIASES.sort((a, b) => b[0].length - a[0].length);   // longest first so "1 john" beats "john"
 const ALIAS_MAP = Object.fromEntries(ALIASES);
 
 const U = { zero:0, one:1, two:2, three:3, four:4, five:5, six:6, seven:7, eight:8, nine:9, ten:10, eleven:11,
@@ -53,17 +54,19 @@ function wordsToDigits(text) {
   return out.join(" ");
 }
 
+const NUMBERED = "(samuel|kings|chronicles|corinthians|corinthian|thessalonians|timothy|peter|john)";
 function normalize(text) {
   let t = text.toLowerCase().replace(/[,;!?"“”]/g, " ").replace(/\.(?=\s|$)/g, " ");
-  t = t.replace(/\b(first|1st)\s+(?=(samuel|kings|chronicles|corinthians|thessalonians|timothy|peter|john)\b)/g, "1 ");
-  t = t.replace(/\b(second|2nd)\s+(?=(samuel|kings|chronicles|corinthians|thessalonians|timothy|peter|john)\b)/g, "2 ");
-  t = t.replace(/\b(third|3rd)\s+(?=john\b)/g, "3 ");
+  t = t.replace(new RegExp(`\\b(first|1st|i)\\s+(?=${NUMBERED}\\b)`, "g"), "1 ");
+  t = t.replace(new RegExp(`\\b(second|2nd|ii)\\s+(?=${NUMBERED}\\b)`, "g"), "2 ");
+  t = t.replace(/\b(third|3rd|iii)\s+(?=john\b)/g, "3 ");
   return wordsToDigits(t);
 }
 
 const NAMES = ALIASES.map(([n]) => n.replace(/ /g, "\\s+")).join("|");
 const REF_RE = new RegExp(
-  `\\b(${NAMES})\\s*(?:chapter\\s*)?(\\d{1,3})(?:\\s*(?:[:.]|verses?)?\\s*(\\d{1,3})(?:\\s*(?:-|–|to|through)\\s*(\\d{1,3}))?)?(?!\\d)`,
+  `\\b(${NAMES})\\s*(?:chapter\\s*)?(\\d{1,3})` +
+  `(?:\\s*(?:[:.]|and\\s+verses?|verses?)?\\s*(\\d{1,3})(?:\\s*(?:-|–|to|through)\\s*(\\d{1,3}))?)?(?!\\d)`,
   "g"
 );
 
@@ -78,7 +81,7 @@ function detectReferences(text) {
     const [, , ch, v1, v2] = m;
     let ref = `${book} ${ch}`;
     if (v1) ref += `:${v1}` + (v2 && +v2 > +v1 ? `-${v2}` : "");
-    found.push(ref);
+    if (!found.includes(ref)) found.push(ref);
   }
   return found;
 }
