@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Verse display</title>
+<style>
+  :root { --bg:#0f1420; --text:#f2efe8; --ref:#9fb4ff; }
+  * { box-sizing: border-box; }
+  html, body { height:100%; margin:0; background:var(--bg); color:var(--text); }
+  body { display:flex; align-items:center; justify-content:center; padding:6vh 7vw;
+         font-family: Georgia, "Times New Roman", serif; }
+  main { max-width: 1400px; width:100%; }
+  #ref { color:var(--ref); font-size:clamp(1.4rem,3.2vw,3rem); margin:0 0 .6em; font-weight:600; }
+  #text { font-size:clamp(1.6rem,4.4vw,4.4rem); line-height:1.35; margin:0; }
+  #text.long { font-size:clamp(1.2rem,2.6vw,2.6rem); line-height:1.4; }
+  #tr { color:#8a93a8; font-size:clamp(.9rem,1.4vw,1.3rem); margin-top:1.2em; }
+  #hint { position:fixed; bottom:12px; left:16px; font:14px system-ui,sans-serif; color:#566; }
+</style>
+</head>
+<body>
+<main>
+  <h1 id="ref"></h1>
+  <p id="text"></p>
+  <div id="tr"></div>
+</main>
+<div id="hint">Waiting for a verse. Press F11 for full screen.</div>
+<script>
+  const ch = new BroadcastChannel("verse-screen");
+  const $ = (id) => document.getElementById(id);
+  ch.onmessage = (e) => {
+    const v = e.data;
+    $("hint").style.display = "none";
+    if (!v) { $("ref").textContent = $("text").textContent = $("tr").textContent = ""; return; }
+    $("ref").textContent = v.reference;
+    $("text").textContent = v.text;
+    $("text").className = v.text.length > 380 ? "long" : "";
+    $("tr").textContent = v.translation;
+  };
+</script>
+</body>
+</html>
