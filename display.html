@@ -4,39 +4,133 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Verse display</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@500;600&family=Lora:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
-  :root { --bg:#0f1420; --text:#f2efe8; --ref:#9fb4ff; }
-  * { box-sizing: border-box; }
-  html, body { height:100%; margin:0; background:var(--bg); color:var(--text); }
-  body { display:flex; align-items:center; justify-content:center; padding:6vh 7vw;
-         font-family: Georgia, "Times New Roman", serif; }
-  main { max-width: 1400px; width:100%; }
-  #ref { color:var(--ref); font-size:clamp(1.4rem,3.2vw,3rem); margin:0 0 .6em; font-weight:600; }
-  #text { font-size:clamp(1.6rem,4.4vw,4.4rem); line-height:1.35; margin:0; }
-  #text.long { font-size:clamp(1.2rem,2.6vw,2.6rem); line-height:1.4; }
-  #tr { color:#8a93a8; font-size:clamp(.9rem,1.4vw,1.3rem); margin-top:1.2em; }
-  #hint { position:fixed; bottom:12px; left:16px; font:14px system-ui,sans-serif; color:#566; }
+  :root { --text:#f4f2ed; --ref:#a9c0ff; --mute:#8d97b5; }
+  * { box-sizing:border-box; }
+  html, body { height:100%; margin:0; }
+  body {
+    display:flex; align-items:center; justify-content:center; overflow:hidden; color:var(--text);
+    font-family: Lora, Georgia, "Times New Roman", serif;
+    background:
+      radial-gradient(1300px 760px at 12% 0%, #1e3170 0%, transparent 62%),
+      radial-gradient(1000px 700px at 100% 100%, #2b1b55 0%, transparent 58%),
+      #080d20;
+  }
+  body.idle { cursor:none; }
+
+  .stage { width:min(1500px, 86vw); opacity:0; transition:opacity .25s ease; }
+  .stage.show { opacity:1; }
+
+  #ref { display:flex; align-items:center; gap:18px; margin:0 0 .55em; color:var(--ref);
+         font-size:clamp(22px, 4.2vh, 48px); font-weight:600; letter-spacing:.005em; }
+  #ref::before { content:""; width:56px; height:3px; border-radius:2px; background:var(--ref); flex:none; }
+  #text { margin:0; font-weight:500; line-height:1.32; text-wrap:pretty; }
+  .meta { display:flex; flex-wrap:wrap; align-items:baseline; gap:6px 18px; margin-top:1.3em;
+          font-family:Inter, system-ui, sans-serif; }
+  #tr { color:var(--ref); font-weight:600; font-size:clamp(14px, 2.2vh, 24px); }
+  #copy { color:var(--mute); font-weight:500; font-size:clamp(10px, 1.4vh, 15px); max-width:70ch; }
+
+  /* Lower third: sits at the bottom of the picture, good for live streams */
+  body[data-layout="lower"] { background:transparent; align-items:flex-end; padding-bottom:5vh; }
+  body[data-layout="lower"] .stage {
+    width:92vw; padding:2.2vh 2.4vw; border-radius:14px; border-left:6px solid var(--ref);
+    background:rgba(8,13,32,.9);
+  }
+  body[data-layout="lower"] #ref { font-size:clamp(16px, 2.8vh, 30px); margin-bottom:.3em; }
+  body[data-layout="lower"] #ref::before { display:none; }
+  body[data-layout="lower"] .meta { margin-top:.7em; }
+
+  #idle { position:fixed; inset:0; display:none; align-items:center; justify-content:center;
+          font-family:Inter, system-ui, sans-serif; color:#5b668c; font-size:28px; }
+  body.preview.empty #idle { display:flex; }
 </style>
 </head>
 <body>
-<main>
+<main class="stage" id="stage" aria-live="polite">
   <h1 id="ref"></h1>
   <p id="text"></p>
-  <div id="tr"></div>
+  <div class="meta"><span id="tr"></span><span id="copy"></span></div>
 </main>
-<div id="hint">Waiting for a verse. Press F11 for full screen.</div>
+<div id="idle">Waiting for a verse</div>
+
 <script>
+  const params = new URLSearchParams(location.search);
+  const preview = params.has("preview");
+  const LS = "vs:current";
   const ch = new BroadcastChannel("verse-screen");
   const $ = (id) => document.getElementById(id);
+  let lastTs = 0, hideTimer = null;
+
+  if (preview) document.body.classList.add("preview");
+  document.body.classList.add("empty");
+
+  function fit() {
+    const t = $("text");
+    const lower = document.body.dataset.layout === "lower";
+    const maxH = innerHeight * (lower ? 0.22 : 0.56);
+    let lo = 12, hi = Math.round(innerHeight * (lower ? 0.05 : 0.115)), best = lo;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      t.style.fontSize = mid + "px";
+      if (t.offsetHeight <= maxH) { best = mid; lo = mid + 1; } else { hi = mid - 1; }
+    }
+    t.style.fontSize = best + "px";
+  }
+
+  function render(v, layout) {
+    document.body.dataset.layout = layout || "full";
+    const stage = $("stage");
+    stage.classList.remove("show");
+    setTimeout(() => {
+      $("ref").textContent = v.reference;
+      $("text").textContent = v.text;
+      $("tr").textContent = v.translation || "";
+      $("copy").textContent = v.copyright || "";
+      document.body.classList.remove("empty");
+      fit();
+      stage.classList.add("show");
+    }, 160);
+  }
+
+  function clearScreen() {
+    $("stage").classList.remove("show");
+    document.body.classList.add("empty");
+  }
+
+  function apply(m) {
+    if (!m || (m.ts && m.ts === lastTs)) return;
+    if (m.ts) lastTs = m.ts;
+    if (m.type === "show") render(m.verse, m.layout);
+    else if (m.type === "clear") clearScreen();
+  }
+
   ch.onmessage = (e) => {
-    const v = e.data;
-    $("hint").style.display = "none";
-    if (!v) { $("ref").textContent = $("text").textContent = $("tr").textContent = ""; return; }
-    $("ref").textContent = v.reference;
-    $("text").textContent = v.text;
-    $("text").className = v.text.length > 380 ? "long" : "";
-    $("tr").textContent = v.translation;
+    if (e.data && e.data.type === "ping") { if (!preview) ch.postMessage({ type: "pong" }); }
+    else apply(e.data);
   };
+
+  // Second channel: localStorage. Also lets the display recover if it is reloaded.
+  window.addEventListener("storage", (e) => {
+    if (e.key !== LS) return;
+    try { apply(JSON.parse(e.newValue)); } catch (_) {}
+  });
+  try {
+    const saved = JSON.parse(localStorage.getItem(LS) || "null");
+    if (saved && Date.now() - saved.ts < 6 * 3600 * 1000) apply(saved);
+  } catch (_) {}
+
+  addEventListener("resize", fit);
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(fit);
+
+  // Hide the mouse pointer on the projector
+  addEventListener("mousemove", () => {
+    document.body.classList.remove("idle");
+    clearTimeout(hideTimer);
+    hideTimer = setTimeout(() => document.body.classList.add("idle"), 2000);
+  });
 </script>
 </body>
 </html>
