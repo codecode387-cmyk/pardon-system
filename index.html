@@ -3,161 +3,457 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Verse operator</title>
+<title>Verse Screen</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
-  :root { --bg:#eef1f5; --card:#fff; --ink:#1b1f2a; --mute:#667085; --accent:#2b4acb; --line:#d9dee7; --ok:#12805c; }
+  :root { --bg:#0d111a; --panel:#141a27; --panel-2:#1a2132; --line:#263048; --ink:#e8ecf4; --mute:#8b95aa;
+          --accent:#7f95ff; --accent-ink:#0a0e24; --live:#ff6b6b; --ok:#4ccf94; }
   * { box-sizing:border-box; }
-  body { margin:0; background:var(--bg); color:var(--ink); font:16px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif; }
-  header { display:flex; flex-wrap:wrap; gap:12px; align-items:center; padding:14px 20px; background:var(--card); border-bottom:1px solid var(--line); }
-  header h1 { font-size:1.1rem; margin:0 auto 0 0; }
-  button, select, input[type=text] { font:inherit; padding:8px 12px; border:1px solid var(--line); border-radius:8px; background:#fff; color:var(--ink); }
-  button { cursor:pointer; }
-  button.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
-  button.live { background:#c0362c; border-color:#c0362c; color:#fff; }
-  button:focus-visible, select:focus-visible, input:focus-visible { outline:3px solid #9fb4ff; outline-offset:2px; }
-  main { display:grid; grid-template-columns:1fr 1fr; gap:20px; padding:20px; max-width:1200px; margin:0 auto; }
-  @media (max-width:800px) { main { grid-template-columns:1fr; } }
-  section { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:16px; }
-  h2 { font-size:1rem; margin:0 0 10px; }
-  #transcript { height:260px; overflow:auto; white-space:pre-wrap; color:var(--mute); }
-  #transcript b { color:var(--ink); font-weight:600; }
-  .row { display:flex; gap:8px; margin-bottom:12px; }
-  .row input { flex:1; }
-  .item { border:1px solid var(--line); border-radius:8px; padding:12px; margin-bottom:10px; }
-  .item.onscreen { border-color:var(--ok); box-shadow:inset 3px 0 0 var(--ok); }
-  .item h3 { margin:0 0 4px; font-size:1rem; }
-  .item p { margin:0 0 10px; color:var(--mute); font-family:Georgia,serif; }
-  .item .btns { display:flex; gap:8px; }
-  #status { color:var(--mute); font-size:.9rem; }
-  label.chk { display:flex; gap:6px; align-items:center; font-size:.95rem; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:15px/1.5 Inter, system-ui, -apple-system, "Segoe UI", sans-serif; }
+  :focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+
+  .top { display:flex; align-items:center; gap:14px; padding:12px 24px; background:var(--panel); border-bottom:1px solid var(--line); }
+  .brand { font-weight:600; font-size:17px; letter-spacing:-.01em; margin-right:auto; }
+  .pill { display:inline-flex; align-items:center; gap:8px; padding:5px 12px; border:1px solid var(--line); border-radius:999px; font-size:13px; color:var(--mute); white-space:nowrap; }
+  .dot { width:8px; height:8px; border-radius:50%; background:#4a5470; }
+  .pill.on .dot { background:var(--ok); }
+  .pill.live .dot { background:var(--live); }
+  .pill.live { color:var(--ink); }
+
+  .btn { font:inherit; color:var(--ink); background:var(--panel-2); border:1px solid var(--line); padding:8px 14px; border-radius:8px; cursor:pointer; }
+  .btn:hover:not(:disabled) { border-color:#3b4869; }
+  .btn.primary { background:var(--accent); border-color:var(--accent); color:var(--accent-ink); font-weight:600; }
+  .btn.live { background:var(--live); border-color:var(--live); color:#2a0808; font-weight:600; }
+  .btn.ghost { background:transparent; color:var(--mute); }
+  .btn:disabled { opacity:.45; cursor:default; }
+  select, input[type=text] { font:inherit; color:var(--ink); background:var(--bg); border:1px solid var(--line); border-radius:8px; padding:8px 10px; max-width:100%; }
+
+  #notice { margin:16px 24px 0; padding:12px 16px; border:1px solid var(--line); border-radius:10px; background:var(--panel); color:var(--mute); display:flex; gap:12px; align-items:center; }
+  #notice[hidden] { display:none; }
+  #notice span { flex:1; }
+
+  .grid { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1.15fr); gap:20px; padding:20px 24px; max-width:1400px; margin:0 auto; align-items:start; }
+  @media (max-width:900px) { .grid { grid-template-columns:1fr; } }
+  .stack { display:grid; gap:20px; }
+  .panel { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:18px; }
+  .panel-head { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; margin-bottom:14px; }
+  h2 { font-size:15px; font-weight:600; margin:0; }
+
+  #meter { width:100%; height:64px; display:block; background:var(--bg); border:1px solid var(--line); border-radius:8px; }
+  .controls { display:flex; gap:10px; margin:14px 0; }
+  .controls .big { flex:1; padding:12px 16px; font-size:16px; }
+  .transcript { height:340px; overflow:auto; background:var(--bg); border:1px solid var(--line); border-radius:8px; padding:14px; font-size:16px; line-height:1.65; }
+  .transcript .interim, .transcript .ph { color:var(--mute); }
+
+  .preview { position:relative; aspect-ratio:16/9; overflow:hidden; border:1px solid var(--line); border-radius:8px; background:#080d20; }
+  .preview iframe { position:absolute; left:0; top:0; width:1280px; height:720px; border:0; transform-origin:0 0; pointer-events:none; }
+  .settings { display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin-top:14px; }
+  .settings label { display:flex; align-items:center; gap:8px; color:var(--mute); font-size:14px; }
+  .settings .grow { flex:1; }
+
+  .manual { display:flex; gap:8px; }
+  .manual input { width:230px; }
+  #msg { min-height:20px; margin:0 0 10px; color:var(--mute); font-size:14px; }
+  .item { display:flex; gap:14px; align-items:flex-start; justify-content:space-between; padding:14px; margin-bottom:10px; background:var(--panel-2); border:1px solid var(--line); border-radius:10px; }
+  .item.onscreen { border-color:var(--ok); }
+  .item h3 { margin:0 0 4px; font-size:15px; font-weight:600; }
+  .item .tag { margin-left:8px; font-size:12px; font-weight:500; color:var(--ok); }
+  .snippet { margin:0; color:var(--mute); font-size:14px; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+  .actions { display:flex; gap:8px; flex:none; }
+  .empty, .keys { margin:0; color:var(--mute); font-size:14px; }
+  .keys { margin-top:12px; }
 </style>
 </head>
 <body>
-<header>
-  <h1>Verse operator</h1>
-  <label class="chk"><input type="checkbox" id="auto"> Show detected verses automatically</label>
-  <select id="tr" aria-label="Translation">
-    <option value="kjv">KJV</option>
-    <option value="web">WEB</option>
-  </select>
-  <select id="lang" aria-label="Speech language">
-    <option value="en-NG">English (Nigeria)</option>
-    <option value="en-US">English (US)</option>
-    <option value="en-GB">English (UK)</option>
-  </select>
-  <button id="openDisplay">Open display window</button>
-  <button id="mic" class="primary">Start listening</button>
+
+<header class="top">
+  <div class="brand">Verse Screen</div>
+  <div class="pill" id="displayPill"><span class="dot"></span><span id="displayTxt">No display connected</span></div>
+  <button class="btn" id="openDisplay">Open display window</button>
 </header>
 
-<main>
-  <section>
-    <h2>What the preacher said</h2>
-    <div id="transcript" aria-live="polite"></div>
-    <div id="status"></div>
+<div id="notice" hidden>
+  <span id="noticeTxt"></span>
+  <button class="btn ghost" id="noticeX">Dismiss</button>
+</div>
+
+<main class="grid">
+  <section class="panel" aria-labelledby="h-listen">
+    <div class="panel-head">
+      <h2 id="h-listen">Listening</h2>
+      <div class="pill" id="micPill"><span class="dot"></span><span id="micTxt">Microphone off</span></div>
+    </div>
+    <canvas id="meter" aria-label="Microphone level"></canvas>
+    <div class="controls">
+      <button class="btn primary big" id="mic">Start listening</button>
+      <select id="lang" aria-label="Speech language">
+        <option value="en-NG">English (Nigeria)</option>
+        <option value="en-US">English (US)</option>
+        <option value="en-GB">English (UK)</option>
+      </select>
+    </div>
+    <div class="transcript" id="transcript" aria-live="polite"><span class="ph">What is being said will appear here.</span></div>
   </section>
 
-  <section>
-    <h2>Verses</h2>
-    <form class="row" id="manual">
-      <input type="text" id="manualRef" placeholder="Type a reference, e.g. Romans 8:28" aria-label="Reference">
-      <button type="submit">Find</button>
-    </form>
-    <div id="list"><p style="color:var(--mute)">Detected verses will appear here. Click “Show on screen” to display one.</p></div>
-    <button id="clear">Clear the screen</button>
-  </section>
+  <div class="stack">
+    <section class="panel" aria-labelledby="h-screen">
+      <div class="panel-head">
+        <h2 id="h-screen">On screen</h2>
+        <button class="btn" id="clear">Clear screen</button>
+      </div>
+      <div class="preview" id="previewBox"><iframe id="previewFrame" src="display.html?preview=1" title="Display preview"></iframe></div>
+      <div class="settings">
+        <label>Translation <select id="tr"></select></label>
+        <label>Layout
+          <select id="layout">
+            <option value="full">Full screen</option>
+            <option value="lower">Lower third</option>
+          </select>
+        </label>
+        <label class="grow"><input type="checkbox" id="auto"> Show detected verses automatically</label>
+      </div>
+    </section>
+
+    <section class="panel" aria-labelledby="h-found">
+      <div class="panel-head">
+        <h2 id="h-found">Detected verses</h2>
+        <form class="manual" id="manual">
+          <input type="text" id="manualRef" placeholder="Type a verse, e.g. Romans 8:28" aria-label="Verse reference">
+          <button class="btn" type="submit">Show</button>
+        </form>
+      </div>
+      <p id="msg" role="status"></p>
+      <div id="list"><p class="empty">Verses appear here as they are spoken.</p></div>
+      <p class="keys">Enter shows the newest verse. Esc clears the screen.</p>
+    </section>
+  </div>
 </main>
 
 <script src="parser.js"></script>
 <script>
-  const $ = (id) => document.getElementById(id);
-  const channel = new BroadcastChannel("verse-screen");
-  let recog = null, listening = false, recent = [];
+const $ = (id) => document.getElementById(id);
+const LS = "vs:current";
+const channel = new BroadcastChannel("verse-screen");
+try { localStorage.removeItem(LS); } catch (_) {}   // start every session with a blank screen
 
-  function show(v, el) {
-    channel.postMessage(v);
-    document.querySelectorAll(".item").forEach((i) => i.classList.remove("onscreen"));
-    if (el) el.classList.add("onscreen");
+let current = null;          // verse currently on screen
+let items = [];              // detected verses in the list
+let listening = false, recog = null, restartTimer = null;
+let finalBuf = "", interim = "";
+const seen = new Map();      // ref -> time first added (stops duplicates)
+let pending = {};            // ref -> how many checks in a row it has been present
+
+/* ---------- display connection ---------- */
+let lastPong = 0;
+channel.onmessage = (e) => { if (e.data && e.data.type === "pong") lastPong = Date.now(); };
+setInterval(() => channel.postMessage({ type: "ping" }), 2000);
+setInterval(() => {
+  const ok = Date.now() - lastPong < 5000;
+  $("displayPill").classList.toggle("on", ok);
+  $("displayTxt").textContent = ok ? "Display connected" : "No display connected";
+}, 1000);
+channel.postMessage({ type: "ping" });
+
+$("openDisplay").onclick = () => window.open("display.html", "verse-display", "width=1280,height=720");
+
+/* ---------- live preview scaling ---------- */
+function scalePreview() {
+  $("previewFrame").style.transform = `scale(${$("previewBox").clientWidth / 1280})`;
+}
+new ResizeObserver(scalePreview).observe($("previewBox"));
+scalePreview();
+
+/* ---------- translations ---------- */
+let translationInfo = {};
+async function loadTranslations() {
+  let data;
+  try {
+    const r = await fetch("/api/translations");
+    if (!r.ok) throw new Error();
+    data = await r.json();
+  } catch (_) {
+    data = { translations: [
+      { id: "free:kjv", abbr: "KJV", name: "King James Version", group: "Free" },
+      { id: "free:web", abbr: "WEB", name: "World English Bible", group: "Free" } ], bible: false };
   }
+  translationInfo = data;
+  const sel = $("tr");
+  const groups = {};
+  for (const t of data.translations) (groups[t.group] = groups[t.group] || []).push(t);
+  for (const g of Object.keys(groups)) {
+    const og = document.createElement("optgroup");
+    og.label = g;
+    for (const t of groups[g]) {
+      const o = document.createElement("option");
+      o.value = t.id; o.dataset.abbr = t.abbr; o.textContent = `${t.abbr} - ${t.name}`;
+      og.appendChild(o);
+    }
+    sel.appendChild(og);
+  }
+  let saved = null;
+  try { saved = localStorage.getItem("vs:tr"); } catch (_) {}
+  if (saved && [...sel.options].some((o) => o.value === saved)) sel.value = saved;
 
-  async function addVerse(ref) {
-    const key = ref.toLowerCase();
-    if (recent.includes(key)) return;           // ignore repeats of the same verse
-    recent = [key, ...recent].slice(0, 5);
+  const warn = (data.warnings || [])[0];
+  let dismissed = false;
+  try { dismissed = localStorage.getItem("vs:notice") === "1"; } catch (_) {}
+  if (warn) showNotice(warn);
+  else if (!data.bible && !dismissed) showNotice("Only the free translations are available. To add NIV, NKJV, NLT and others, connect an API.Bible key (steps are in the README).");
+}
+function showNotice(t) { $("noticeTxt").textContent = t; $("notice").hidden = false; }
+$("noticeX").onclick = () => { $("notice").hidden = true; try { localStorage.setItem("vs:notice", "1"); } catch (_) {} };
 
-    const list = $("list");
-    if (list.querySelector("p")) list.innerHTML = "";
-    const el = document.createElement("div");
-    el.className = "item";
-    el.innerHTML = `<h3></h3><p>Loading…</p><div class="btns"></div>`;
-    el.querySelector("h3").textContent = ref;
-    list.prepend(el);
+const trLabel = () => { const o = $("tr").selectedOptions[0]; return o ? o.dataset.abbr : ""; };
 
-    try {
-      const r = await fetch(`/api/verse?ref=${encodeURIComponent(ref)}&t=${$("tr").value}`);
-      const v = await r.json();
-      if (!r.ok) throw new Error(v.error || "Not found");
-      el.querySelector("h3").textContent = `${v.reference} (${v.translation})`;
-      el.querySelector("p").textContent = v.text.length > 220 ? v.text.slice(0, 220) + "…" : v.text;
-      const b = el.querySelector(".btns");
-      const go = document.createElement("button");
-      go.className = "primary"; go.textContent = "Show on screen";
-      go.onclick = () => show(v, el);
-      const rm = document.createElement("button");
-      rm.textContent = "Dismiss"; rm.onclick = () => el.remove();
-      b.append(go, rm);
-      if ($("auto").checked) show(v, el);
-    } catch (e) {
-      el.querySelector("p").textContent = "Could not load this verse: " + e.message;
+$("tr").onchange = async () => {
+  try { localStorage.setItem("vs:tr", $("tr").value); } catch (_) {}
+  const onScreenRef = current && current.ref;
+  items.forEach((it) => loadItem(it, false));
+  if (onScreenRef) {                       // switch what the congregation sees too
+    try { publish(await fetchVerse(onScreenRef)); } catch (e) { setMsg(e.message); }
+  }
+};
+$("layout").onchange = () => { if (current) publish(current); };
+
+/* ---------- fetching and showing verses ---------- */
+async function fetchVerse(ref) {
+  const r = await fetch(`/api/verse?ref=${encodeURIComponent(ref)}&t=${encodeURIComponent($("tr").value)}`);
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(d.error || "Could not load that verse");
+  return { ref, reference: d.reference, text: d.text, translation: trLabel(), copyright: d.copyright || "" };
+}
+
+function send(payload) {
+  try { localStorage.setItem(LS, JSON.stringify(payload)); } catch (_) {}
+  channel.postMessage(payload);
+}
+function publish(verse) {
+  current = verse;
+  send({ type: "show", verse, layout: $("layout").value, ts: Date.now() });
+  markOnScreen();
+}
+function clearScreen() {
+  current = null;
+  send({ type: "clear", ts: Date.now() });
+  markOnScreen();
+}
+$("clear").onclick = clearScreen;
+
+/* ---------- the detected list ---------- */
+function setMsg(t) { $("msg").textContent = t || ""; }
+
+function markOnScreen() {
+  for (const it of items) {
+    const on = !!current && current.ref === it.ref;
+    it.el.classList.toggle("onscreen", on);
+    it.el.querySelector(".tag").textContent = on ? "On screen" : "";
+  }
+}
+
+async function loadItem(it, autoShow) {
+  const snip = it.el.querySelector(".snippet");
+  const btn = it.el.querySelector(".show");
+  snip.textContent = "Loading…"; btn.disabled = true;
+  try {
+    it.verse = await fetchVerse(it.ref);
+    it.el.querySelector("h3 .name").textContent = `${it.verse.reference} (${it.verse.translation})`;
+    snip.textContent = it.verse.text;
+    btn.disabled = false;
+    if (autoShow) publish(it.verse);
+  } catch (e) {
+    it.verse = null;
+    snip.textContent = e.message;
+  }
+}
+
+function addItem(ref, autoShow) {
+  const el = document.createElement("article");
+  el.className = "item";
+  el.innerHTML = `<div><h3><span class="name"></span><span class="tag"></span></h3><p class="snippet"></p></div>
+    <div class="actions"><button class="btn primary show" disabled>Show</button><button class="btn ghost dismiss">Dismiss</button></div>`;
+  el.querySelector(".name").textContent = ref;
+  const it = { ref, el, verse: null };
+  el.querySelector(".show").onclick = () => it.verse && publish(it.verse);
+  el.querySelector(".dismiss").onclick = () => removeItem(it);
+  if (!items.length) $("list").innerHTML = "";
+  items.unshift(it);
+  $("list").prepend(el);
+  while (items.length > 12) removeItem(items[items.length - 1]);
+  loadItem(it, autoShow);
+}
+
+function removeItem(it) {
+  it.el.remove();
+  items = items.filter((x) => x !== it);
+  if (!items.length) $("list").innerHTML = `<p class="empty">Verses appear here as they are spoken.</p>`;
+}
+
+/* ---------- turning speech into verses ---------- */
+const lower = (s) => s.toLowerCase();
+const isMoreSpecific = (longer, shorter) => longer.startsWith(shorter) && /^[:\-]/.test(longer.slice(shorter.length));
+
+function consider(ref) {
+  const now = Date.now();
+  for (const [k, t] of seen) if (now - t > 90000) seen.delete(k);
+  const key = lower(ref);
+  if (seen.has(key)) return;
+  for (const k of seen.keys()) if (isMoreSpecific(k, key)) return;            // already have "John 3:16", ignore "John 3"
+  for (const k of [...seen.keys()]) {
+    if (isMoreSpecific(key, k)) {                                             // "John 3" became "John 3:16"
+      const old = items.find((i) => lower(i.ref) === k);
+      if (old && !(current && current.ref === old.ref)) removeItem(old);
     }
   }
+  seen.set(key, now);
+  addItem(ref, $("auto").checked);
+}
 
-  function startListening() {
-    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SR) { $("status").textContent = "Speech recognition needs Chrome or Edge."; return; }
-    recog = new SR();
-    recog.continuous = true;
-    recog.interimResults = true;
-    recog.lang = $("lang").value;
-    recog.onresult = (e) => {
-      let interim = "", finalText = "";
-      for (let i = e.resultIndex; i < e.results.length; i++) {
-        const t = e.results[i][0].transcript;
-        if (e.results[i].isFinal) finalText += t + " "; else interim += t;
-      }
-      const box = $("transcript");
-      if (finalText) {
-        box.dataset.text = ((box.dataset.text || "") + finalText).slice(-4000);
-        detectReferences(finalText).forEach(addVerse);
-      }
-      box.innerHTML = "";
-      const b = document.createElement("b"); b.textContent = (box.dataset.text || "");
-      box.append(b, document.createTextNode(interim));
-      box.scrollTop = box.scrollHeight;
-    };
-    recog.onerror = (e) => { $("status").textContent = "Mic error: " + e.error; };
-    recog.onend = () => { if (listening) recog.start(); };   // Chrome stops after silence, so restart
-    recog.start();
-    listening = true;
-    $("mic").textContent = "Stop listening"; $("mic").className = "live";
-    $("status").textContent = "Listening…";
-  }
+const windowText = () => finalBuf.slice(-300) + " " + interim;
 
-  function stopListening() {
-    listening = false; recog && recog.stop();
-    $("mic").textContent = "Start listening"; $("mic").className = "primary";
-    $("status").textContent = "";
-  }
+function tick() {                       // runs a few times a second while listening
+  if (!listening) return;
+  const refs = new Set(detectReferences(windowText()));
+  for (const r of refs) { pending[r] = (pending[r] || 0) + 1; if (pending[r] >= 2) consider(r); }
+  for (const r of Object.keys(pending)) if (!refs.has(r)) delete pending[r];
+}
+setInterval(tick, 450);
 
-  $("mic").onclick = () => (listening ? stopListening() : startListening());
-  $("openDisplay").onclick = () => window.open("display.html", "verse-display", "width=1280,height=720");
-  $("clear").onclick = () => show(null);
-  $("manual").onsubmit = (e) => {
-    e.preventDefault();
-    const found = detectReferences($("manualRef").value);
-    found.forEach((r) => { recent = recent.filter((x) => x !== r.toLowerCase()); addVerse(r); });
-    if (!found.length) $("status").textContent = "Could not read that reference.";
-    $("manualRef").value = "";
+function renderTranscript() {
+  const box = $("transcript");
+  box.innerHTML = "";
+  const f = document.createElement("span"); f.textContent = finalBuf.slice(-900);
+  const i = document.createElement("span"); i.className = "interim"; i.textContent = interim;
+  box.append(f, i);
+  box.scrollTop = box.scrollHeight;
+}
+
+function setMic(state, text) {
+  $("micPill").className = "pill" + (state === "live" ? " live" : "");
+  $("micTxt").textContent = text;
+}
+
+function startListening() {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) { setMic("off", "Use Chrome or Edge"); return; }
+  recog = new SR();
+  recog.continuous = true;
+  recog.interimResults = true;
+  recog.lang = $("lang").value;
+  recog.onresult = (e) => {
+    let fin = "";
+    interim = "";
+    for (let i = e.resultIndex; i < e.results.length; i++) {
+      const t = e.results[i][0].transcript;
+      if (e.results[i].isFinal) fin += t + " "; else interim += t;
+    }
+    if (fin) {
+      finalBuf += fin;
+      detectReferences(windowText()).forEach(consider);   // final text is stable, so act at once
+    }
+    renderTranscript();
   };
+  recog.onerror = (e) => {
+    if (e.error === "no-speech" || e.error === "aborted") return;
+    if (e.error === "language-not-supported") { $("lang").value = "en-US"; return; }
+    const why = { "not-allowed": "Microphone blocked. Allow it in the address bar.",
+      "service-not-allowed": "Microphone blocked. Allow it in the address bar.",
+      "audio-capture": "No microphone found.", "network": "Needs an internet connection." }[e.error] || e.error;
+    setMic("off", why);
+  };
+  recog.onend = () => {                  // the browser stops after silence, so start again
+    if (!listening) return;
+    clearTimeout(restartTimer);
+    restartTimer = setTimeout(() => { try { recog.lang = $("lang").value; recog.start(); } catch (_) {} }, 300);
+  };
+  listening = true;
+  try { recog.start(); } catch (_) {}
+  $("mic").textContent = "Stop listening"; $("mic").className = "btn live big";
+  setMic("live", "Listening");
+  startMeter();
+}
+
+function stopListening() {
+  listening = false;
+  clearTimeout(restartTimer);
+  try { recog && recog.stop(); } catch (_) {}
+  interim = ""; renderTranscript();
+  $("mic").textContent = "Start listening"; $("mic").className = "btn primary big";
+  setMic("off", "Microphone off");
+  stopMeter();
+}
+$("mic").onclick = () => (listening ? stopListening() : startListening());
+$("lang").onchange = () => { if (listening) { try { recog.stop(); } catch (_) {} } };
+
+/* ---------- microphone level meter ---------- */
+const canvas = $("meter"), g = canvas.getContext("2d");
+const levels = new Array(64).fill(0);
+let audioCtx = null, analyser = null, stream = null, raf = 0, lastPush = 0;
+
+function drawMeter() {
+  const dpr = window.devicePixelRatio || 1;
+  const w = canvas.clientWidth, h = canvas.clientHeight;
+  if (canvas.width !== w * dpr) { canvas.width = w * dpr; canvas.height = h * dpr; }
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.clearRect(0, 0, w, h);
+  const bw = w / levels.length;
+  g.fillStyle = listening ? "#7f95ff" : "#2c3550";
+  levels.forEach((v, i) => {
+    const bh = Math.max(3, v * (h - 12));
+    g.beginPath();
+    g.roundRect(i * bw + 1, (h - bh) / 2, Math.max(2, bw - 3), bh, 2);
+    g.fill();
+  });
+}
+
+async function startMeter() {
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    analyser = audioCtx.createAnalyser();
+    analyser.fftSize = 1024;
+    audioCtx.createMediaStreamSource(stream).connect(analyser);
+    const buf = new Uint8Array(analyser.fftSize);
+    const loop = (now) => {
+      analyser.getByteTimeDomainData(buf);
+      let sum = 0;
+      for (const b of buf) { const x = (b - 128) / 128; sum += x * x; }
+      if (now - lastPush > 50) { levels.push(Math.min(1, Math.sqrt(sum / buf.length) * 5)); levels.shift(); lastPush = now; }
+      drawMeter();
+      raf = requestAnimationFrame(loop);
+    };
+    raf = requestAnimationFrame(loop);
+  } catch (_) { /* the meter is optional; speech recognition still works */ }
+}
+function stopMeter() {
+  cancelAnimationFrame(raf);
+  if (stream) stream.getTracks().forEach((t) => t.stop());
+  if (audioCtx) audioCtx.close();
+  stream = audioCtx = analyser = null;
+  levels.fill(0); drawMeter();
+}
+drawMeter();
+addEventListener("resize", drawMeter);
+
+/* ---------- typing a verse by hand ---------- */
+$("manual").onsubmit = (e) => {
+  e.preventDefault();
+  const found = detectReferences($("manualRef").value);
+  if (!found.length) { setMsg("Could not read that reference. Try something like John 3:16."); return; }
+  setMsg("");
+  found.forEach((r) => { seen.set(lower(r), Date.now()); addItem(r, true); });
+  $("manualRef").value = "";
+};
+
+/* ---------- keyboard ---------- */
+addEventListener("keydown", (e) => {
+  if (/INPUT|SELECT|TEXTAREA/.test(e.target.tagName)) return;
+  if (e.key === "Enter") { const it = items.find((i) => i.verse); if (it) { e.preventDefault(); publish(it.verse); } }
+  if (e.key === "Escape") clearScreen();
+});
+
+loadTranslations();
 </script>
 </body>
 </html>
