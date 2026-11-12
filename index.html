@@ -181,6 +181,7 @@
 <script src="bible.js"></script>
 <script>
 const $ = (id) => document.getElementById(id);
+function localKey() { try { return localStorage.getItem("vs:bkey") || ""; } catch (_) { return ""; } }
 const LS = "vs:current";
 const channel = new BroadcastChannel("verse-screen");
 try { localStorage.removeItem(LS); } catch (_) {}   // start every session with a blank screen
@@ -295,7 +296,6 @@ $("tr").onchange = async () => {
 $("layout").onchange = () => { if (current) publish(current, false); };
 
 /* ---------- fetching and showing verses ---------- */
-const localKey = () => { try { return localStorage.getItem("vs:bkey") || ""; } catch (_) { return ""; } };
 
 async function fetchVerse(ref, step) {
   const t = $("tr").value;
@@ -613,7 +613,8 @@ function jumpRelative(cmd) {                            // "go to verse 5" in th
     catch (e) { showNav(e.message, true); }
   });
 }
-function runFinalCommands(text) {                       // runs on finished sentences only, so "next week" is never mistaken for "next"
+function runFinalCommands(text) {
+  if (typeof detectCommands !== "function") return;     // old parser.js: skip voice commands instead of failing                       // runs on finished sentences only, so "next week" is never mistaken for "next"
   if (!$("voice").checked) return;
   for (const c of detectCommands(text, true)) {
     if (c.explicit) continue;                           // "next verse" etc. are handled live above
