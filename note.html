@@ -1,0 +1,335 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Service notes</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Lora:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root { --bg:#0d111a; --panel:#141a27; --panel-2:#1a2132; --line:#263048; --ink:#e8ecf4; --mute:#8b95aa;
+          --accent:#7f95ff; --accent-ink:#0a0e24; --live:#ff6b6b; --ok:#4ccf94;
+          --paper:#faf9f6; --text:#1d2230; --soft:#667085; --rule:#e4e2dc; --blue:#4f6cf0; --tint:#eef1ff; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:15px/1.5 Inter, system-ui, -apple-system, "Segoe UI", sans-serif; }
+  :focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+  [hidden] { display:none !important; }
+  .top { display:flex; align-items:center; gap:14px; padding:12px 24px; background:var(--panel); border-bottom:1px solid var(--line); }
+  .brand { font-weight:600; font-size:17px; margin-right:auto; }
+  .btn { font:inherit; color:var(--ink); background:var(--panel-2); border:1px solid var(--line); padding:8px 14px; border-radius:8px; cursor:pointer; text-decoration:none; display:inline-block; }
+  .btn:hover { border-color:#3b4869; }
+  .btn.primary { background:var(--accent); border-color:var(--accent); color:var(--accent-ink); font-weight:600; }
+  .btn.small { padding:5px 10px; font-size:13px; }
+  .btn.danger:hover { border-color:var(--live); color:var(--live); }
+  input[type=text], input[type=search] { font:inherit; color:var(--ink); background:var(--bg); border:1px solid var(--line); border-radius:8px; padding:8px 10px; width:100%; }
+
+  .layout { display:grid; grid-template-columns:300px minmax(0,1fr); gap:20px; padding:20px 24px; max-width:1400px; margin:0 auto; align-items:start; }
+  @media (max-width:900px) { .layout { grid-template-columns:1fr; } }
+  .side { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:14px; position:sticky; top:16px; max-height:calc(100vh - 32px); overflow:auto; }
+  .side h2 { font-size:14px; margin:0 0 10px; }
+  .svc { display:block; width:100%; text-align:left; font:inherit; color:var(--ink); background:transparent; border:1px solid transparent; border-radius:8px; padding:10px; margin-top:6px; cursor:pointer; }
+  .svc:hover { background:var(--panel-2); }
+  .svc.sel { background:var(--panel-2); border-color:var(--line); }
+  .svc b { display:block; font-weight:600; font-size:14px; }
+  .svc span { color:var(--mute); font-size:13px; }
+  .svc .live { color:var(--live); margin-left:6px; }
+  .side-foot { display:flex; gap:8px; margin-top:14px; flex-wrap:wrap; }
+
+  .toolbar { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-bottom:14px; }
+  .toolbar label { color:var(--mute); font-size:14px; display:flex; gap:6px; align-items:center; margin-right:auto; }
+
+  .doc { background:var(--paper); color:var(--text); border-radius:12px; padding:44px min(6vw,64px); }
+  .doc input { background:transparent; color:inherit; border:1px solid transparent; border-radius:6px; padding:4px 6px; margin-left:-6px; }
+  .doc input:hover, .doc input:focus { border-color:var(--rule); background:#fff; }
+  .title { font:600 32px/1.2 Lora, Georgia, serif; width:100%; }
+  .meta { display:flex; flex-wrap:wrap; gap:6px 22px; align-items:center; color:var(--soft); margin:8px 0 26px; font-size:14px; }
+  .meta input { width:200px; font-size:14px; color:var(--text); }
+  .badge { color:#c0362c; font-weight:600; }
+
+  .summary { display:grid; gap:18px; padding:18px 20px; margin-bottom:30px; background:#fff; border:1px solid var(--rule); border-radius:10px; }
+  .summary h3 { margin:0 0 8px; font-size:14px; color:var(--soft); font-weight:600; }
+  .chips { display:flex; flex-wrap:wrap; gap:8px; }
+  .chip { font:inherit; font-size:14px; color:var(--blue); background:var(--tint); border:1px solid #d5dcff; border-radius:999px; padding:4px 12px; cursor:pointer; }
+  .kp { margin:0; padding-left:20px; }
+  .kp li { margin:4px 0; cursor:pointer; }
+  .none { color:var(--soft); font-size:14px; margin:0; }
+
+  .entry { display:grid; grid-template-columns:62px minmax(0,1fr) auto; gap:14px; padding:10px 0; border-top:1px solid var(--rule); }
+  .entry:first-child { border-top:0; }
+  .time { color:var(--soft); font-size:13px; padding-top:5px; font-variant-numeric:tabular-nums; }
+  .speech, .note { margin:0; font:400 18px/1.7 Lora, Georgia, serif; outline:none; border-radius:4px; white-space:pre-wrap; }
+  .speech:focus, .note:focus { background:#fff; box-shadow:0 0 0 2px #d5dcff; }
+  .entry.starred .speech { background:var(--tint); box-shadow:-10px 0 0 var(--tint), -13px 0 0 var(--blue); }
+  .note { background:#fff8e6; padding:8px 12px; border-left:3px solid #e0a82e; }
+  .note:empty::before { content:"Type your note"; color:#a59b84; }
+  .entry.verse .body { background:#fff; border:1px solid var(--rule); border-left:4px solid var(--blue); border-radius:8px; padding:12px 16px; }
+  .vref { font-weight:600; color:var(--blue); font-size:15px; margin-bottom:4px; }
+  .vtext { margin:0; font:italic 400 18px/1.6 Lora, Georgia, serif; }
+  .copy { margin-top:6px; color:var(--soft); font-size:12px; }
+  .acts { display:flex; gap:4px; align-items:flex-start; opacity:.45; }
+  .entry:hover .acts, .entry:focus-within .acts { opacity:1; }
+  .acts button { font:inherit; font-size:13px; color:var(--soft); background:transparent; border:1px solid var(--rule); border-radius:6px; padding:3px 8px; cursor:pointer; }
+  .acts button[aria-pressed="true"] { color:#fff; background:var(--blue); border-color:var(--blue); }
+  .acts button:hover { border-color:var(--blue); }
+  #addNote { margin-top:22px; color:var(--text); background:#fff; border-color:var(--rule); }
+
+  .empty { text-align:center; color:var(--mute); padding:80px 20px; }
+
+  @media print {
+    body { background:#fff; }
+    .top, .side, .toolbar, .acts, #addNote { display:none !important; }
+    .layout { display:block; padding:0; max-width:none; }
+    .doc { padding:0; border-radius:0; background:#fff; }
+    .doc input { border:0 !important; }
+    .entry { break-inside:avoid; }
+  }
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="brand">Service notes</div>
+  <a class="btn" href="index.html">Back to the operator page</a>
+</header>
+
+<div class="layout">
+  <aside class="side">
+    <h2>Services</h2>
+    <input type="search" id="search" placeholder="Search all notes" aria-label="Search all notes">
+    <div id="svcList"></div>
+    <div class="side-foot">
+      <button class="btn small" id="backup">Download backup</button>
+      <button class="btn small" id="restoreBtn">Restore backup</button>
+      <input type="file" id="restoreFile" accept="application/json" hidden>
+    </div>
+  </aside>
+
+  <main>
+    <div class="empty" id="empty" hidden>
+      <p>No services saved yet.</p>
+      <p>Go to the operator page and click Start listening. Everything said is saved here as it happens.</p>
+    </div>
+
+    <div class="toolbar" id="toolbar" hidden>
+      <label><input type="checkbox" id="follow" checked> Follow the live service</label>
+      <button class="btn small" id="copy">Copy</button>
+      <button class="btn small" id="md">Download Markdown</button>
+      <button class="btn small" id="word">Download Word</button>
+      <button class="btn small" id="print">Print or save as PDF</button>
+      <button class="btn small danger" id="del">Delete service</button>
+    </div>
+
+    <article class="doc" id="doc" hidden>
+      <input class="title" id="title" aria-label="Service title">
+      <div class="meta">
+        <span id="when"></span>
+        <label>Preacher <input type="text" id="preacher" placeholder="Add name"></label>
+        <span id="stats"></span>
+        <span class="badge" id="live" hidden>Live now</span>
+      </div>
+
+      <section class="summary" id="summary">
+        <div><h3>Verses used</h3><div class="chips" id="chips"></div></div>
+        <div><h3>Key points</h3><ol class="kp" id="kp"></ol></div>
+      </section>
+
+      <section id="timeline"></section>
+      <button class="btn" id="addNote">Add a note</button>
+    </article>
+  </main>
+</div>
+
+<script src="store.js"></script>
+<script>
+const $ = (id) => document.getElementById(id);
+const el = (tag, cls) => { const e = document.createElement(tag); if (cls) e.className = cls; return e; };
+let curId = null, stale = false;
+
+const isLive = (s) => Store.activeId() === s.id &&
+  Date.now() - (s.entries.length ? (s.entries[s.entries.length - 1].end || s.entries[s.entries.length - 1].t) : s.start) < 120000;
+
+function select(id) {
+  curId = id;
+  history.replaceState(null, "", id ? "#" + id : location.pathname);
+  render(); renderSide();
+  window.scrollTo(0, 0);
+}
+
+/* ---------- sidebar ---------- */
+function renderSide() {
+  const q = $("search").value.trim().toLowerCase();
+  let metas = Store.list();
+  if (q) metas = metas.filter((m) => {
+    if ((m.title || "").toLowerCase().includes(q)) return true;
+    const s = Store.get(m.id);
+    return s && s.entries.some((e) => (e.text || "").toLowerCase().includes(q) || (e.reference || "").toLowerCase().includes(q));
+  });
+  const box = $("svcList");
+  box.innerHTML = "";
+  if (!metas.length) { const p = el("p", "none"); p.style.color = "var(--mute)"; p.style.marginTop = "10px"; p.textContent = q ? "No matches." : "Nothing here yet."; box.append(p); }
+  for (const m of metas) {
+    const b = el("button", "svc" + (m.id === curId ? " sel" : ""));
+    const t = el("b"); t.textContent = m.title || "Untitled";
+    const d = el("span"); d.textContent = `${new Date(m.start).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}, ${m.words} words`;
+    if (Store.activeId() === m.id) { const l = el("span", "live"); l.textContent = "Active"; d.append(l); }
+    b.append(t, d);
+    b.onclick = () => select(m.id);
+    box.append(b);
+  }
+}
+
+/* ---------- main document ---------- */
+function editable(p) { try { p.contentEditable = "plaintext-only"; } catch (_) { p.contentEditable = "true"; } }
+
+function renderMeta(s) {
+  const st = Store.stats(s);
+  $("when").textContent = `${Store.fmtDate(s.start)}, ${Store.fmtClock(s.start)}`;
+  $("stats").textContent = `${Store.elapsed(st.duration)} long, ${st.words} words, ${st.verses} verses`;
+  $("live").hidden = !isLive(s);
+}
+
+function jump(id) {
+  const n = document.getElementById("e-" + id);
+  if (n) { n.scrollIntoView({ behavior: "smooth", block: "center" }); }
+}
+
+function buildEntry(s, e) {
+  const row = el("div", `entry ${e.type}${e.starred ? " starred" : ""}`);
+  row.id = "e-" + e.id;
+  const time = el("div", "time");
+  time.textContent = Store.elapsed(e.t - s.start);
+  time.title = Store.fmtClock(e.t);
+  const body = el("div", "body");
+
+  if (e.type === "verse") {
+    const h = el("div", "vref"); h.textContent = `${e.reference} (${e.translation})`;
+    const p = el("p", "vtext"); p.textContent = e.text;
+    body.append(h, p);
+    if (e.copyright) { const c = el("div", "copy"); c.textContent = e.copyright; body.append(c); }
+  } else {
+    const p = el("p", e.type === "note" ? "note" : "speech");
+    editable(p);
+    p.textContent = e.text;
+    p.addEventListener("blur", () => {
+      const v = p.innerText.trim();
+      if (!v) { Store.remove(s.id, e.id); render(); renderSide(); }
+      else if (v !== e.text) { Store.update(s.id, e.id, { text: v }); e.text = v; renderMeta(Store.get(s.id)); renderSide(); }
+    });
+    body.append(p);
+  }
+
+  const acts = el("div", "acts");
+  if (e.type !== "verse") {
+    const star = el("button");
+    star.textContent = "Key point";
+    star.setAttribute("aria-pressed", e.starred ? "true" : "false");
+    star.onclick = () => { Store.update(s.id, e.id, { starred: !e.starred }); render(); };
+    acts.append(star);
+  }
+  const rm = el("button"); rm.textContent = "Delete";
+  rm.onclick = () => { if (confirm("Delete this entry from the notes?")) { Store.remove(s.id, e.id); render(); renderSide(); } };
+  acts.append(rm);
+
+  row.append(time, body, acts);
+  return row;
+}
+
+function render() {
+  const s = curId ? Store.get(curId) : null;
+  const any = Store.list().length > 0;
+  $("empty").hidden = any;
+  $("doc").hidden = !s; $("toolbar").hidden = !s;
+  if (!s) return;
+
+  if (document.activeElement !== $("title")) $("title").value = s.title;
+  if (document.activeElement !== $("preacher")) $("preacher").value = s.preacher || "";
+  renderMeta(s);
+
+  const chips = $("chips"); chips.innerHTML = "";
+  const verses = s.entries.filter((e) => e.type === "verse");
+  if (!verses.length) { const p = el("p", "none"); p.textContent = "Verses shown on screen will be listed here."; chips.append(p); }
+  verses.forEach((e) => { const c = el("button", "chip"); c.textContent = `${e.reference} (${e.translation})`; c.onclick = () => jump(e.id); chips.append(c); });
+
+  const kp = $("kp"); kp.innerHTML = "";
+  const stars = s.entries.filter((e) => e.starred && e.type !== "verse");
+  if (!stars.length) { const li = el("p", "none"); li.textContent = "Mark a paragraph as a key point and it shows up here."; kp.replaceWith(Object.assign(li, { id: "kp" })); }
+  else {
+    if (kp.tagName !== "OL") { const ol = el("ol", "kp"); ol.id = "kp"; kp.replaceWith(ol); }
+    const list = $("kp"); list.innerHTML = "";
+    stars.forEach((e) => { const li = el("li"); li.textContent = e.text.length > 170 ? e.text.slice(0, 170) + "…" : e.text; li.onclick = () => jump(e.id); list.append(li); });
+  }
+
+  const tl = $("timeline"); tl.innerHTML = "";
+  if (!s.entries.length) { const p = el("p", "none"); p.textContent = "Nothing has been said yet. Start listening on the operator page."; tl.append(p); }
+  s.entries.forEach((e) => tl.append(buildEntry(s, e)));
+
+  if ($("follow").checked && isLive(s)) window.scrollTo(0, document.body.scrollHeight);
+}
+
+/* ---------- keeping in step with the operator page ---------- */
+function refreshAll() { renderSide(); render(); }
+function editing() { const a = document.activeElement; return a && (a.isContentEditable || a.tagName === "INPUT"); }
+let timer = null;
+addEventListener("storage", (e) => {
+  if (!e.key || !(e.key === Store.IDX || e.key === Store.ACTIVE || e.key.startsWith(Store.PREFIX))) return;
+  clearTimeout(timer);
+  timer = setTimeout(() => {
+    if (!curId || !Store.get(curId)) { const m = Store.list()[0]; if (m && !curId) curId = Store.activeId() || m.id; }
+    if (editing()) { stale = true; renderSide(); } else refreshAll();
+  }, 300);
+});
+addEventListener("focusout", () => { if (stale) setTimeout(() => { if (!editing()) { stale = false; refreshAll(); } }, 50); });
+setInterval(() => { const s = curId && Store.get(curId); if (s) renderMeta(s); }, 15000);
+
+/* ---------- editing the heading ---------- */
+$("title").onchange = () => { Store.rename(curId, { title: $("title").value.trim() || Store.defaultTitle() }); renderSide(); };
+$("preacher").onchange = () => { Store.rename(curId, { preacher: $("preacher").value.trim() }); };
+$("search").oninput = renderSide;
+$("addNote").onclick = () => {
+  const id = Store.addNote(curId, "");
+  render();
+  const n = document.querySelector(`#e-${id} .note`);
+  if (n) { n.focus(); n.scrollIntoView({ block: "center" }); }
+};
+
+/* ---------- export ---------- */
+const cur = () => Store.get(curId);
+$("copy").onclick = async () => {
+  try { await navigator.clipboard.writeText(Store.toMarkdown(cur())); $("copy").textContent = "Copied"; }
+  catch (_) { $("copy").textContent = "Copy failed"; }
+  setTimeout(() => ($("copy").textContent = "Copy"), 1800);
+};
+$("md").onclick = () => { const s = cur(); Store.download(Store.slug(s.title) + ".md", "text/markdown", Store.toMarkdown(s)); };
+$("word").onclick = () => { const s = cur(); Store.download(Store.slug(s.title) + ".doc", "application/msword", Store.toWordHtml(s)); };
+$("print").onclick = () => window.print();
+$("del").onclick = () => {
+  const s = cur();
+  if (!confirm(`Delete "${s.title}" and all its notes? This cannot be undone.`)) return;
+  Store.del(s.id);
+  const next = Store.list()[0];
+  select(next ? next.id : null);
+};
+
+$("backup").onclick = () => Store.download("verse-screen-backup.json", "application/json", JSON.stringify(Store.backupAll()));
+$("restoreBtn").onclick = () => $("restoreFile").click();
+$("restoreFile").onchange = async (e) => {
+  const f = e.target.files[0]; if (!f) return;
+  try {
+    const n = Store.restore(JSON.parse(await f.text()));
+    alert(n ? `Restored ${n} service${n > 1 ? "s" : ""}.` : "That file has no services in it.");
+    refreshAll();
+  } catch (_) { alert("That file could not be read."); }
+  e.target.value = "";
+};
+
+/* ---------- start ---------- */
+(function init() {
+  const hash = location.hash.slice(1);
+  const metas = Store.list();
+  curId = (hash && Store.get(hash) && hash) || Store.activeId() || (metas[0] && metas[0].id) || null;
+  if (curId && !Store.get(curId)) curId = metas[0] ? metas[0].id : null;
+  refreshAll();
+})();
+</script>
+</body>
+</html>
