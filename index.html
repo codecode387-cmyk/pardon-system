@@ -53,6 +53,16 @@
   .settings label { display:flex; align-items:center; gap:8px; color:var(--mute); font-size:14px; }
   .settings .grow { flex:1; }
 
+  .svc-bar { display:flex; gap:8px; margin-bottom:6px; }
+  .svc-bar input { flex:1; min-width:0; }
+  #svcStats { margin:0 0 14px; color:var(--mute); font-size:13px; }
+  #svcStats.bad { color:var(--live); }
+  .nav { display:grid; grid-template-columns:repeat(4,1fr); gap:8px; margin-top:14px; }
+  @media (max-width:560px) { .nav { grid-template-columns:repeat(2,1fr); } }
+  .nav .btn { display:inline-flex; align-items:center; justify-content:center; gap:6px; padding:10px 8px; font-size:14px; }
+  .nav svg { flex:none; }
+  #navMsg { min-height:20px; margin:8px 0 0; color:var(--mute); font-size:13px; }
+  #navMsg.bad { color:var(--live); }
   .manual { display:flex; gap:8px; }
   .manual input { width:230px; }
   #msg { min-height:20px; margin:0 0 10px; color:var(--mute); font-size:14px; }
@@ -71,6 +81,7 @@
 <header class="top">
   <div class="brand">Verse Screen</div>
   <div class="pill" id="displayPill"><span class="dot"></span><span id="displayTxt">No display connected</span></div>
+  <button class="btn" id="openNotes">Service notes</button>
   <button class="btn" id="openDisplay">Open display window</button>
 </header>
 
@@ -85,6 +96,11 @@
       <h2 id="h-listen">Listening</h2>
       <div class="pill" id="micPill"><span class="dot"></span><span id="micTxt">Microphone off</span></div>
     </div>
+    <div class="svc-bar">
+      <input type="text" id="svcTitle" aria-label="Service title" placeholder="Service title">
+      <button class="btn" id="newSvc">New service</button>
+    </div>
+    <p id="svcStats" role="status"></p>
     <canvas id="meter" aria-label="Microphone level"></canvas>
     <div class="controls">
       <button class="btn primary big" id="mic">Start listening</button>
@@ -104,6 +120,13 @@
         <button class="btn" id="clear">Clear screen</button>
       </div>
       <div class="preview" id="previewBox"><iframe id="previewFrame" src="display.html?preview=1" title="Display preview"></iframe></div>
+      <div class="nav" role="group" aria-label="Move through the Bible">
+        <button class="btn" id="prevCh" disabled><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 6l-6 6 6 6M19 6l-6 6 6 6"/></svg> Chapter</button>
+        <button class="btn" id="prevV" disabled><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg> Verse</button>
+        <button class="btn primary" id="nextV" disabled>Verse <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg></button>
+        <button class="btn" id="nextCh" disabled>Chapter <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 6l6 6-6 6M5 6l6 6-6 6"/></svg></button>
+      </div>
+      <p id="navMsg" role="status"></p>
       <div class="settings">
         <label>Translation <select id="tr"></select></label>
         <label>Layout
@@ -113,6 +136,7 @@
           </select>
         </label>
         <label class="grow"><input type="checkbox" id="auto"> Show detected verses automatically</label>
+        <label class="grow"><input type="checkbox" id="voice" checked> Move when they say "next verse", "previous verse" or "next chapter"</label>
       </div>
     </section>
 
@@ -126,11 +150,20 @@
       </div>
       <p id="msg" role="status"></p>
       <div id="list"><p class="empty">Verses appear here as they are spoken.</p></div>
-      <p class="keys">Enter shows the newest verse. Esc clears the screen.</p>
+      <p class="keys">Enter shows the newest verse. Esc clears the screen. The left and right arrow keys move one verse; hold Shift to move one chapter.</p>
     </section>
   </div>
 </main>
 
+<script src="store.js"></script>
+<script>
+  // If store.js was not uploaded, keep everything else working and say so.
+  if (typeof Store === "undefined") {
+    window.NO_STORE = true;
+    window.Store = { addVerse() { return true; }, addSpeech() { return true; }, ensureActive() {}, activeId() { return null; },
+      list() { return []; }, rename() {}, create() {}, endActive() {}, defaultTitle() { return ""; }, IDX: "", ACTIVE: "" };
+  }
+</script>
 <script src="parser.js"></script>
 <script>
 const $ = (id) => document.getElementById(id);
@@ -212,25 +245,48 @@ $("tr").onchange = async () => {
   const onScreenRef = current && current.ref;
   items.forEach((it) => loadItem(it, false));
   if (onScreenRef) {                       // switch what the congregation sees too
-    try { publish(await fetchVerse(onScreenRef)); } catch (e) { setMsg(e.message); }
+    try { publish(await fetchVerse(onScreenRef), false); } catch (e) { setMsg(e.message); }
   }
 };
-$("layout").onchange = () => { if (current) publish(current); };
+$("layout").onchange = () => { if (current) publish(current, false); };
 
 /* ---------- fetching and showing verses ---------- */
-async function fetchVerse(ref) {
-  const r = await fetch(`/api/verse?ref=${encodeURIComponent(ref)}&t=${encodeURIComponent($("tr").value)}`);
-  const d = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(d.error || "Could not load that verse");
-  return { ref, reference: d.reference, text: d.text, translation: trLabel(), copyright: d.copyright || "" };
+async function fetchVerse(ref, step) {
+  const t = $("tr").value;
+  const nav = step ? `&nav=${step.nav}&unit=${step.unit}` : "";
+  const done = (d) => ({ ref: d.ref || ref, reference: d.reference, text: d.text, translation: trLabel(), copyright: d.copyright || "" });
+  let why = "";
+  try {
+    const r = await fetch(`/api/verse?ref=${encodeURIComponent(ref)}&t=${encodeURIComponent(t)}${nav}`);
+    const d = await r.json().catch(() => null);
+    if (r.ok && d && d.text) return done(d);
+    if (r.status === 400 || (step && r.status === 404)) throw new Error(d && d.error || "Could not read that reference");
+    why = d && d.error ? d.error : `the /api/verse function is missing or broken (status ${r.status})`;
+    if (/not set|not enabled/.test(why)) why = "This translation needs an API.Bible key (see the README). Pick KJV or WEB for now.";
+  } catch (e) {
+    if (e.message && !/fetch|Failed/i.test(e.message)) throw e;
+    why = "could not reach the server";
+  }
+  if (t.startsWith("free:") && !step) {   // backup route: ask the free Bible service straight from the browser
+    try {
+      const r = await fetch(`https://bible-api.com/${encodeURIComponent(ref.replace(/^Psalms/, "Psalm"))}?translation=${t.slice(5)}`);
+      if (!r.ok) throw new Error("not found");
+      const d = await r.json();
+      let text = (d.text || "").replace(/\s*\n+\s*/g, " ").trim();
+      if (text.length > 1000) text = text.slice(0, text.lastIndexOf(" ", 1000)) + "…";
+      return done({ reference: d.reference, text });
+    } catch (_) { /* fall through to the error below */ }
+  }
+  throw new Error("Could not load this verse: " + why);
 }
 
 function send(payload) {
   try { localStorage.setItem(LS, JSON.stringify(payload)); } catch (_) {}
   channel.postMessage(payload);
 }
-function publish(verse) {
+function publish(verse, record = true) {
   current = verse;
+  if (record) { Store.addVerse(verse); refreshSessionBar(); }
   send({ type: "show", verse, layout: $("layout").value, ts: Date.now() });
   markOnScreen();
 }
@@ -245,6 +301,7 @@ $("clear").onclick = clearScreen;
 function setMsg(t) { $("msg").textContent = t || ""; }
 
 function markOnScreen() {
+  ["prevCh", "prevV", "nextV", "nextCh"].forEach((id) => { $(id).disabled = !current; });
   for (const it of items) {
     const on = !!current && current.ref === it.ref;
     it.el.classList.toggle("onscreen", on);
@@ -348,8 +405,14 @@ function startListening() {
       const t = e.results[i][0].transcript;
       if (e.results[i].isFinal) fin += t + " "; else interim += t;
     }
+    if (fin) runVoice(commandsIn(fin).slice(interimFired));
+    if (fin) interimFired = 0;
+    const live = commandsIn(interim);
+    if (live.length > interimFired) runVoice(live.slice(interimFired));
+    interimFired = live.length;
     if (fin) {
       finalBuf += fin;
+      if (!Store.addSpeech(fin)) saveFailed(); else refreshSessionBar();
       detectReferences(windowText()).forEach(consider);   // final text is stable, so act at once
     }
     renderTranscript();
@@ -368,6 +431,7 @@ function startListening() {
     restartTimer = setTimeout(() => { try { recog.lang = $("lang").value; recog.start(); } catch (_) {} }, 300);
   };
   listening = true;
+  Store.ensureActive(); refreshSessionBar();
   try { recog.start(); } catch (_) {}
   $("mic").textContent = "Stop listening"; $("mic").className = "btn live big";
   setMic("live", "Listening");
@@ -451,9 +515,79 @@ addEventListener("keydown", (e) => {
   if (/INPUT|SELECT|TEXTAREA/.test(e.target.tagName)) return;
   if (e.key === "Enter") { const it = items.find((i) => i.verse); if (it) { e.preventDefault(); publish(it.verse); } }
   if (e.key === "Escape") clearScreen();
+  if ((e.key === "ArrowRight" || e.key === "ArrowLeft") && current) {
+    e.preventDefault();
+    navigate(e.key === "ArrowRight" ? "next" : "prev", e.shiftKey ? "chapter" : "verse");
+  }
 });
 
+/* ---------- next / previous verse and chapter ---------- */
+let navChain = Promise.resolve();
+function showNav(text, bad) { $("navMsg").textContent = text; $("navMsg").classList.toggle("bad", !!bad); }
+function navigate(nav, unit, via) {
+  navChain = navChain.then(async () => {              // one move at a time, so quick "next verse, next verse" works
+    if (!current) return;
+    try {
+      const v = await fetchVerse(current.ref, { nav, unit });
+      publish(v);
+      showNav((via ? via + ": " : "") + v.reference);
+    } catch (e) { showNav(e.message, true); }
+  });
+}
+$("prevCh").onclick = () => navigate("prev", "chapter");
+$("prevV").onclick = () => navigate("prev", "verse");
+$("nextV").onclick = () => navigate("next", "verse");
+$("nextCh").onclick = () => navigate("next", "chapter");
+
+const CMD = /\b(next|previous|prior)\s+(verse|chapter)\b/gi;
+function commandsIn(text) {
+  const out = [];
+  for (const m of text.matchAll(CMD)) out.push([m[1].toLowerCase() === "next" ? "next" : "prev", m[2].toLowerCase()]);
+  return out;
+}
+let interimFired = 0;                                  // commands already acted on while the sentence was still being heard
+function runVoice(cmds) {
+  if (!$("voice").checked || !current) return;
+  cmds.forEach(([n, u]) => navigate(n, u, "Voice"));
+}
+
+/* ---------- service notes ---------- */
+function refreshSessionBar() {
+  if (window.NO_STORE) { $("svcStats").classList.add("bad"); $("svcStats").textContent = "Notes are off because store.js was not uploaded to GitHub."; return; }
+  const id = Store.activeId();
+  const m = id && Store.list().find((x) => x.id === id);
+  if (document.activeElement !== $("svcTitle")) $("svcTitle").value = m ? m.title : "";
+  $("svcTitle").placeholder = m ? "Service title" : Store.defaultTitle();
+  $("svcStats").classList.remove("bad");
+  $("svcStats").textContent = m ? `Saving to notes: ${m.words} words, ${m.verses} verses` : "Notes start saving when you click Start listening.";
+}
+function saveFailed() {
+  $("svcStats").classList.add("bad");
+  $("svcStats").textContent = "Could not save: browser storage is full. Open Service notes and download a backup, then delete old services.";
+}
+$("svcTitle").onchange = () => {
+  const t = $("svcTitle").value.trim();
+  const s = Store.ensureActive();
+  Store.rename(s.id, { title: t || Store.defaultTitle() });
+  refreshSessionBar();
+};
+$("newSvc").onclick = () => {
+  const id = Store.activeId();
+  const m = id && Store.list().find((x) => x.id === id);
+  if (m && (m.words || m.verses) && !confirm("Start a new service? The notes so far stay saved.")) return;
+  Store.endActive();
+  finalBuf = ""; interim = ""; renderTranscript();
+  if (listening) Store.create();
+  refreshSessionBar();
+};
+$("openNotes").onclick = () => {
+  const id = Store.activeId();
+  window.open("notes.html" + (id ? "#" + id : ""), "verse-notes");
+};
+addEventListener("storage", (e) => { if (e.key === Store.IDX || e.key === Store.ACTIVE) refreshSessionBar(); });
+
 loadTranslations();
+refreshSessionBar();
 </script>
 </body>
 </html>
