@@ -141,7 +141,7 @@
           </select>
         </label>
         <label class="grow"><input type="checkbox" id="auto"> Show detected verses automatically</label>
-        <label class="grow"><input type="checkbox" id="voice" checked> Voice commands: "next", "go back", "go down to 15", "go to John 3:16"</label>
+        <label class="grow"><input type="checkbox" id="voice" checked> Voice commands: "next", "go back", "go down to 15", "go to John 3:16", "give me NIV"</label>
         <details class="help"><summary>Not seeing NIV, NLT or other translations?</summary><div id="trStatus"><p>Checking…</p></div>
           <div class="keybox">
             <input type="password" id="bkey" placeholder="Paste your API.Bible key" autocomplete="off" aria-label="API.Bible key">
@@ -163,7 +163,7 @@
       </div>
       <p id="msg" role="status"></p>
       <div id="list"><p class="empty">Verses appear here as they are spoken.</p></div>
-      <p class="keys">Enter shows the newest verse. Esc clears the screen. The left and right arrow keys move one verse; hold Shift to move one chapter. Say "next", "go back", "go down to 15" or "go to John 3:16" to do the same by voice.</p>
+      <p class="keys">Enter shows the newest verse. Esc clears the screen. The left and right arrow keys move one verse; hold Shift to move one chapter. Say "next", "go back", "go down to 15" or "go to John 3:16" to do the same by voice. Say "give me KJV version" or "switch to NIV" to change translation.</p>
     </section>
   </div>
 </main>
@@ -613,9 +613,26 @@ function jumpRelative(cmd) {                            // "go to verse 5" in th
     catch (e) { showNav(e.message, true); }
   });
 }
-function runFinalCommands(text) {
-  if (typeof detectCommands !== "function") return;     // old parser.js: skip voice commands instead of failing                       // runs on finished sentences only, so "next week" is never mistaken for "next"
+
+/* ---------- spoken translation switch ---------- */
+function switchTranslation(abbr) {
+  const opts = [...$("tr").options];
+  const opt = opts.find((o) => (o.dataset.abbr || "").toLowerCase() === abbr)
+           || opts.find((o) => (o.dataset.abbr || "").toLowerCase().startsWith(abbr));
+  if (!opt) { showNav(abbr.toUpperCase() + " is not available. Add your API.Bible key under 'Not seeing NIV, NLT…'.", true); return; }
+  if ($("tr").value === opt.value) { showNav("Already on " + opt.dataset.abbr); return; }
+  $("tr").value = opt.value;
+  $("tr").onchange();                    // reloads the list and the verse on screen in the new translation
+  showNav("Voice: switched to " + opt.dataset.abbr);
+}
+
+function runFinalCommands(text) {                       // runs on finished sentences only, so "next week" is never mistaken for "next"
   if (!$("voice").checked) return;
+  if (typeof detectTranslation === "function") {
+    const tr = detectTranslation(text, true);
+    if (tr) { switchTranslation(tr); return; }
+  }
+  if (typeof detectCommands !== "function") return;     // old parser.js: skip voice commands instead of failing
   for (const c of detectCommands(text, true)) {
     if (c.explicit) continue;                           // "next verse" etc. are handled live above
     if (c.type === "ref") goToRef(c.ref);
