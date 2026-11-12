@@ -26,6 +26,10 @@ module.exports = async (req, res) => {
         .map((b) => ({ id: "bible:" + b.id, abbr: b.abbreviationLocal || b.abbreviation || b.name, name: b.nameLocal || b.name, group: "API.Bible" }))
         .sort((a, b) => rank(a.abbr) - rank(b.abbr) || a.name.localeCompare(b.name));
       list.unshift(...found);
+      const have = found.map((b) => String(b.abbr).toUpperCase());
+      const missing = ["NIV", "NLT", "NKJV"].filter((a) => !have.includes(a));
+      if (!found.length) info.warnings.push("Your API.Bible key works, but it returned no Bibles in the selected language(s).");
+      else if (missing.length) info.hint = `Your API.Bible key works (${found.length} Bibles found), but ${missing.join(", ")} ${missing.length > 1 ? "are" : "is"} not enabled for it yet. In your API.Bible dashboard, open your app and check its selected Bibles. Some need approval from the publisher first.`;
     } catch (e) {
       info.warnings.push(e.message);
     }
