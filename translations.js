@@ -26,9 +26,11 @@ module.exports = async (req, res) => {
         .map((b) => ({ id: "bible:" + b.id, abbr: b.abbreviationLocal || b.abbreviation || b.name, name: b.nameLocal || b.name, group: "API.Bible" }))
         .sort((a, b) => rank(a.abbr) - rank(b.abbr) || a.name.localeCompare(b.name));
       list.unshift(...found);
+      info.found = found.map((b) => b.abbr);
+      info.total = (d.data || []).length;
       const have = found.map((b) => String(b.abbr).toUpperCase());
       const missing = ["NIV", "NLT", "NKJV"].filter((a) => !have.includes(a));
-      if (!found.length) info.warnings.push("Your API.Bible key works, but it returned no Bibles in the selected language(s).");
+      if (!found.length) info.warnings.push(info.total ? `Your API.Bible key works and returned ${info.total} Bibles, but none in the selected language. Set BIBLE_LANGS in Vercel (for example eng,yor,hau).` : "Your API.Bible key works, but no Bibles are enabled for it yet. In your API.Bible dashboard, open your app and select the Bibles you want.");
       else if (missing.length) info.hint = `Your API.Bible key works (${found.length} Bibles found), but ${missing.join(", ")} ${missing.length > 1 ? "are" : "is"} not enabled for it yet. In your API.Bible dashboard, open your app and check its selected Bibles. Some need approval from the publisher first.`;
     } catch (e) {
       info.warnings.push(e.message);
