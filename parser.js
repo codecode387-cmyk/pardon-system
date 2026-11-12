@@ -95,7 +95,7 @@ function detectReferences(text) {
 
 // "go to John 3:16", "turn with me to Romans 8", "open your Bibles to Psalm 23"
 const GO_PREFIX = new RegExp(
-  "(?:\\b(?:go|turn|jump|skip|move|flip)\\s+(?:with\\s+me\\s+|us\\s+)?(?:back\\s+|over\\s+)?(?:to|in)\\s+(?:the\\s+book\\s+of\\s+)?" +
+  "(?:\\b(?:go|turn|jump|skip|move|flip)\\s+(?:with\\s+me\\s+|us\\s+)?(?:(?:back|down|up|over|forward|ahead)\\s+)?(?:to|in)\\s+(?:the\\s+book\\s+of\\s+)?" +
   "|\\bopen\\s+(?:up\\s+)?(?:your\\s+)?bibles?\\s+(?:with\\s+me\\s+)?(?:to|at|in)\\s+(?:the\\s+book\\s+of\\s+)?" +
   "|\\btake\\s+us\\s+to\\s+(?:the\\s+book\\s+of\\s+)?)$"
 );
@@ -106,7 +106,12 @@ function detectGoTo(text) {
 
 const REL = "(?:chapter\\s+(\\d{1,3})\\s*(?:and\\s+)?)?verse\\s+(?:number\\s+)?(\\d{1,3})(?:\\s*(?:-|to|through)\\s*(\\d{1,3}))?";
 const LEAD = "(?:(?:ok|okay|now|so|and)\\s+)*";
-const GO_WORDS = "\\b(?:go|turn|jump|skip|move|flip|read|look)\\s+(?:with\\s+me\\s+|us\\s+)?(?:over\\s+)?(?:to\\s+|at\\s+)?(?:the\\s+)?";
+const GO_WORDS = "\\b(?:go|turn|jump|skip|move|flip|read|look)\\s+(?:with\\s+me\\s+|us\\s+)?(?:(?:back|down|up|over|forward|ahead)\\s+)?(?:to\\s+|at\\s+)?(?:the\\s+)?";
+const LEAD2 = "(?:(?:ok|okay|now|so|and|then|lets|let's|let|us|we|can|you|please)\\s+)*";
+const NUM_GO = new RegExp("^" + LEAD2 +
+  "(?:(?:go|come|move|jump|skip|scroll|flip|turn)\\s+(?:(?:back|down|up|over|forward|ahead)\\s+)?(?:to|at)\\s+" +
+  "|(?:back|down|up|forward|ahead)\\s+(?:to|at)\\s+)" +
+  "(?:verse\\s+(?:number\\s+)?)?(\\d{1,3})(?:\\s*(?:-|to|through)\\s*(\\d{1,3}))?(?:\\s+(?:please|now|again))?$");
 const REL_GO = new RegExp(GO_WORDS + REL);
 const REL_WHOLE = new RegExp("^" + LEAD + REL + "$");
 const CH_GO = new RegExp(GO_WORDS + "chapter\\s+(\\d{1,3})\\b(?!\\s*(?:and\\s+)?verse)");
@@ -124,6 +129,7 @@ function detectCommands(text, whole) {
   }
   let m = REL_GO.exec(t) || (whole && REL_WHOLE.exec(t));
   if (m) cmds.push({ type: "verse", ch: m[1] ? +m[1] : null, v1: +m[2], v2: m[3] ? +m[3] : null });
+  else if (whole && (m = NUM_GO.exec(t))) cmds.push({ type: "verse", ch: null, v1: +m[1], v2: m[2] ? +m[2] : null });
   else if ((m = CH_GO.exec(t) || (whole && CH_WHOLE.exec(t)))) cmds.push({ type: "chapter", ch: +m[1] });
   if (whole && !cmds.length) {
     const words = t.split(" ");
