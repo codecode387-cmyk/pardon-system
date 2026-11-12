@@ -70,8 +70,7 @@ const REF_RE = new RegExp(
   "g"
 );
 
-function detectReferences(text) {
-  const t = normalize(text);
+function scanRefs(t) {
   const found = [];
   let m;
   REF_RE.lastIndex = 0;
@@ -81,9 +80,76 @@ function detectReferences(text) {
     const [, , ch, v1, v2] = m;
     let ref = `${book} ${ch}`;
     if (v1) ref += `:${v1}` + (v2 && +v2 > +v1 ? `-${v2}` : "");
-    if (!found.includes(ref)) found.push(ref);
+    found.push({ ref, index: m.index });
   }
   return found;
 }
 
-if (typeof module !== "undefined") module.exports = { detectReferences };
+function detectReferences(text) {
+  const out = [];
+  for (const f of scanRefs(normalize(text))) if (!out.includes(f.ref)) out.push(f.ref);
+  return out;
+}
+
+/* ---------- spoken commands ---------- */
+
+// "go to John 3:16", "turn with me to Romans 8", "open your Bibles to Psalm 23"
+const GO_PREFIX = new RegExp(
+  "(?:\\b(?:go|turn|jump|skip|move|flip)\\s+(?:with\\s+me\\s+|us\\s+)?(?:back\\s+|over\\s+)?(?:to|in)\\s+(?:the\\s+book\\s+of\\s+)?" +
+  "|\\bopen\\s+(?:up\\s+)?(?:your\\s+)?bibles?\\s+(?:with\\s+me\\s+)?(?:to|at|in)\\s+(?:the\\s+book\\s+of\\s+)?" +
+  "|\\btake\\s+us\\s+to\\s+(?:the\\s+book\\s+of\\s+)?)$"
+);
+function detectGoTo(text) {
+  const t = normalize(text);
+  return scanRefs(t).filter((f) => GO_PREFIX.test(t.slice(Math.max(0, f.index - 50), f.index))).map((f) => f.ref);
+}
+
+const REL = "(?:chapter\\s+(\\d{1,3})\\s*(?:and\\s+)?)?verse\\s+(?:number\\s+)?(\\d{1,3})(?:\\s*(?:-|to|through)\\s*(\\d{1,3}))?";
+const LEAD = "(?:(?:ok|okay|now|so|and)\\s+)*";
+const GO_WORDS = "\\b(?:go|turn|jump|skip|move|flip|read|look)\\s+(?:with\\s+me\\s+|us\\s+)?(?:over\\s+)?(?:to\\s+|at\\s+)?(?:the\\s+)?";
+const REL_GO = new RegExp(GO_WORDS + REL);
+const REL_WHOLE = new RegExp("^" + LEAD + REL + "$");
+const CH_GO = new RegExp(GO_WORDS + "chapter\\s+(\\d{1,3})\\b(?!\\s*(?:and\\s+)?verse)");
+const CH_WHOLE = new RegExp("^" + LEAD + "chapter\\s+(\\d{1,3})$");
+const EXPLICIT = /\b(next|previous|prior)\s+(verse|chapter)\b/g;
+const FILLER = new Set(["ok", "okay", "please", "now", "and", "the", "lets", "let's", "let", "us", "go", "to", "one", "1", "again", "so", "then", "just", "can", "you", "we", "amen", "pastor"]);
+
+// whole = true when `text` is one complete spoken phrase (a finished sentence from the speech engine).
+// Short phrases like "next" or "back" are only treated as commands when they stand alone.
+function detectCommands(text, whole) {
+  const t = normalize(text).replace(/[^a-z0-9\s:'\-]/g, " ").replace(/\s+/g, " ").trim();
+  const cmds = [];
+  for (const m of t.matchAll(EXPLICIT)) {
+    cmds.push({ type: "step", nav: m[1] === "next" ? "next" : "prev", unit: m[2], explicit: true });
+  }
+  let m = REL_GO.exec(t) || (whole && REL_WHOLE.exec(t));
+  if (m) cmds.push({ type: "verse", ch: m[1] ? +m[1] : null, v1: +m[2], v2: m[3] ? +m[3] : null });
+  else if ((m = CH_GO.exec(t) || (whole && CH_WHOLE.exec(t)))) cmds.push({ type: "chapter", ch: +m[1] });
+  if (whole && !cmds.length) {
+    const words = t.split(" ");
+    if (words.length <= 6) {
+      const core = words.filter((w) => !FILLER.has(w));
+      if (core.length === 1) {
+        if (["next", "forward", "continue"].includes(core[0])) cmds.push({ type: "step", nav: "next", unit: "verse", explicit: false });
+        if (["back", "previous", "prior"].includes(core[0])) cmds.push({ type: "step", nav: "prev", unit: "verse", explicit: false });
+      }
+    }
+  }
+  for (const ref of detectGoTo(text)) cmds.push({ type: "ref", ref, explicit: false });
+  return cmds;
+}
+
+// Turn "go to verse 5" into a full reference, using the verse that is on screen now.
+function relativeRef(current, cmd) {
+  const m = /^(.+?)\s+(\d+)(?::(\d+)(?:-(\d+))?)?$/.exec(current || "");
+  if (!m) return null;
+  const [, book, ch, v1] = m;
+  if (cmd.type === "verse") {
+    const c = cmd.ch || ch;
+    return `${book} ${c}:${cmd.v1}` + (cmd.v2 && cmd.v2 > cmd.v1 ? `-${cmd.v2}` : "");
+  }
+  if (cmd.type === "chapter") return `${book} ${cmd.ch}` + (v1 ? ":1" : "");
+  return null;
+}
+
+if (typeof module !== "undefined") module.exports = { detectReferences, detectCommands, detectGoTo, relativeRef };
