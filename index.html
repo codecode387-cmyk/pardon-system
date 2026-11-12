@@ -66,6 +66,8 @@
   details.help { flex-basis:100%; color:var(--mute); font-size:14px; }
   details.help summary { cursor:pointer; }
   details.help p { margin:8px 0 0; }
+  .keybox { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-top:12px; padding-top:12px; border-top:1px solid var(--line); }
+  .keybox input { flex:1; min-width:200px; }
   .manual { display:flex; gap:8px; }
   .manual input { width:230px; }
   #msg { min-height:20px; margin:0 0 10px; color:var(--mute); font-size:14px; }
@@ -140,7 +142,14 @@
         </label>
         <label class="grow"><input type="checkbox" id="auto"> Show detected verses automatically</label>
         <label class="grow"><input type="checkbox" id="voice" checked> Voice commands: "next", "go back", "go down to 15", "go to John 3:16"</label>
-        <details class="help"><summary>Not seeing NIV, NLT or other translations?</summary><div id="trStatus"><p>Checking…</p></div></details>
+        <details class="help"><summary>Not seeing NIV, NLT or other translations?</summary><div id="trStatus"><p>Checking…</p></div>
+          <div class="keybox">
+            <input type="password" id="bkey" placeholder="Paste your API.Bible key" autocomplete="off" aria-label="API.Bible key">
+            <button class="btn primary" type="button" id="bkeySave">Save key</button>
+            <button class="btn ghost" type="button" id="bkeyClear">Remove key</button>
+          </div>
+          <p>The key is saved only in this browser on this computer. It is not stored on GitHub or on the server.</p>
+        </details>
       </div>
     </section>
 
@@ -169,6 +178,7 @@
   }
 </script>
 <script src="parser.js"></script>
+<script src="bible.js"></script>
 <script>
 const $ = (id) => document.getElementById(id);
 const LS = "vs:current";
@@ -216,8 +226,13 @@ async function loadTranslations() {
       { id: "free:kjv", abbr: "KJV", name: "King James Version", group: "Free" },
       { id: "free:web", abbr: "WEB", name: "World English Bible", group: "Free" } ], bible: false };
   }
+  let via = "server";
+  if ((err || !data.bible) && localKey() && typeof BibleCore !== "undefined") {
+    data = await BibleCore.listTranslations({ bibleKey: localKey() });
+    via = "browser";
+  }
   translationInfo = data;
-  diagnose(data, err);
+  diagnose(data, err, via);
   const sel = $("tr");
   const groups = {};
   for (const t of data.translations) (groups[t.group] = groups[t.group] || []).push(t);
@@ -238,17 +253,17 @@ async function loadTranslations() {
   const warn = (data.warnings || [])[0];
   let dismissed = false;
   try { dismissed = localStorage.getItem("vs:notice") === "1"; } catch (_) {}
-  if (err) showNotice("The /api folder was not found on your site, so only KJV and WEB work. Open “Not seeing NIV…” under the translation box for the fix.");
+  if (err && via === "server") showNotice("The /api folder was not found on your site. Open “Not seeing NIV…” under the translation box and paste your API.Bible key there. That works without the api folder.");
   else if (warn) showNotice(warn);
   else if (!dismissed && !data.bible) showNotice("Only the free translations are available. To add NIV, NKJV, NLT and others, connect an API.Bible key (steps are in the README).");
   else if (!dismissed && data.hint) showNotice(data.hint);
 }
-function diagnose(data, err) {
+function diagnose(data, err, via) {
   const lines = [];
-  if (err) lines.push(`The /api functions cannot be reached (${err}). The api folder must be in GitHub at the top level, next to index.html. Upload it, then wait for Vercel to redeploy.`);
-  else if (!data.bible) lines.push("No API.Bible key was found by the server. In Vercel go to Settings, Environment Variables, add BIBLE_API_KEY with your key, then open Deployments and click Redeploy.");
-  else {
-    lines.push("The API.Bible key was found.");
+  if (via === "browser") lines.push("Using the API.Bible key saved in this browser." + (err ? " (The /api folder was not found, but that no longer matters.)" : ""));
+  else if (err) lines.push(`The /api functions cannot be reached (${err}). Easiest fix: paste your API.Bible key in the box below and click Save key. That works without the api folder. (Or upload the api folder to GitHub and redeploy.)`);
+  else if (!data.bible) lines.push("The server has no API.Bible key. Paste your key in the box below and click Save key, or add BIBLE_API_KEY in Vercel and redeploy.");
+  if (via === "browser" || (!err && data.bible)) {
     if (data.warnings && data.warnings.length) lines.push("Problem: " + data.warnings[0]);
     else {
       const f = data.found || [];
@@ -258,6 +273,14 @@ function diagnose(data, err) {
   }
   $("trStatus").replaceChildren(...lines.map((l) => { const p = document.createElement("p"); p.textContent = l; return p; }));
 }
+$("bkeySave").onclick = () => {
+  const k = $("bkey").value.trim();
+  if (!k) return;
+  try { localStorage.setItem("vs:bkey", k); } catch (_) {}
+  location.reload();
+};
+$("bkeyClear").onclick = () => { try { localStorage.removeItem("vs:bkey"); } catch (_) {} location.reload(); };
+if (localKey()) $("bkey").placeholder = "A key is saved in this browser. Paste a new one to replace it.";
 function showNotice(t) { $("noticeTxt").textContent = t; $("notice").hidden = false; }
 $("noticeX").onclick = () => { $("notice").hidden = true; try { localStorage.setItem("vs:notice", "1"); } catch (_) {} };
 
@@ -274,33 +297,26 @@ $("tr").onchange = async () => {
 $("layout").onchange = () => { if (current) publish(current, false); };
 
 /* ---------- fetching and showing verses ---------- */
+const localKey = () => { try { return localStorage.getItem("vs:bkey") || ""; } catch (_) { return ""; } };
+
 async function fetchVerse(ref, step) {
   const t = $("tr").value;
-  const nav = step ? `&nav=${step.nav}&unit=${step.unit}` : "";
   const done = (d) => ({ ref: d.ref || ref, reference: d.reference, text: d.text, translation: trLabel(), copyright: d.copyright || "" });
-  let why = "";
+  const direct = async () => {
+    if (typeof BibleCore === "undefined") throw new Error("bible.js was not uploaded to GitHub.");
+    return done(await BibleCore.lookup({ ref, t, nav: step && step.nav, unit: step && step.unit }, { bibleKey: localKey() }));
+  };
+  if (localKey() && t.startsWith("bible:")) return direct();     // key saved in this browser: go straight to API.Bible
   try {
+    const nav = step ? `&nav=${step.nav}&unit=${step.unit}` : "";
     const r = await fetch(`/api/verse?ref=${encodeURIComponent(ref)}&t=${encodeURIComponent(t)}${nav}`);
     const d = await r.json().catch(() => null);
     if (r.ok && d && d.text) return done(d);
-    if (r.status === 400 || (step && r.status === 404)) throw new Error(d && d.error || "Could not read that reference");
-    why = d && d.error ? d.error : `the /api/verse function is missing or broken (status ${r.status})`;
-    if (/not set|not enabled/.test(why)) why = "This translation needs an API.Bible key (see the README). Pick KJV or WEB for now.";
+    if (d && d.error && (r.status === 400 || r.status === 404)) throw Object.assign(new Error(d.error), { final: true });
   } catch (e) {
-    if (e.message && !/fetch|Failed/i.test(e.message)) throw e;
-    why = "could not reach the server";
+    if (e.final) throw e;
   }
-  if (t.startsWith("free:") && !step) {   // backup route: ask the free Bible service straight from the browser
-    try {
-      const r = await fetch(`https://bible-api.com/${encodeURIComponent(ref.replace(/^Psalms/, "Psalm"))}?translation=${t.slice(5)}`);
-      if (!r.ok) throw new Error("not found");
-      const d = await r.json();
-      let text = (d.text || "").replace(/\s*\n+\s*/g, " ").trim();
-      if (text.length > 1000) text = text.slice(0, text.lastIndexOf(" ", 1000)) + "…";
-      return done({ reference: d.reference, text });
-    } catch (_) { /* fall through to the error below */ }
-  }
-  throw new Error("Could not load this verse: " + why);
+  return direct();                                               // the server is missing or failed: ask the Bible services directly
 }
 
 function send(payload) {
