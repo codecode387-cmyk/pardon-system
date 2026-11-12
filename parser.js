@@ -158,4 +158,29 @@ function relativeRef(current, cmd) {
   return null;
 }
 
-if (typeof module !== "undefined") module.exports = { detectReferences, detectCommands, detectGoTo, relativeRef };
+/* ---------- spoken translation switch ---------- */
+// "give me KJV version", "switch to NIV", "use the new living translation", or just "NIV"
+const TR_NAMES = [
+  ["nkjv", "new\\s+king\\s+james(?:\\s+version)?|n\\s*k\\s*j\\s*v"],
+  ["kjv",  "king\\s+james(?:\\s+version)?|k\\s*j\\s*v"],
+  ["niv",  "new\\s+international(?:\\s+version)?|n\\s*i\\s*v"],
+  ["nlt",  "new\\s+living(?:\\s+translation)?|n\\s*l\\s*t"],
+  ["esv",  "english\\s+standard(?:\\s+version)?|e\\s*s\\s*v"],
+  ["nasb", "new\\s+american\\s+standard(?:\\s+bible)?|n\\s*a\\s*s\\s*b"],
+  ["amp",  "amplified(?:\\s+bible)?|amp\\s+(?:version|translation|bible)"],
+  ["web",  "world\\s+english(?:\\s+bible)?|web\\s+(?:version|translation|bible)"],
+];
+const TR_TRIGGER = "(?:give\\s+(?:me|us)|switch(?:\\s+over)?\\s+to|change(?:\\s+over)?\\s+to|use|show\\s+(?:me|us)|put\\s+it\\s+in|read\\s+(?:it\\s+)?in|let'?s\\s+use|go\\s+to|move\\s+to|i\\s+want|bring\\s+up)";
+const TR_TAIL = "(?:\\s+(?:version|translation|bible))?(?:\\s+(?:please|now))?";
+
+function detectTranslation(text, whole) {
+  const t = String(text).toLowerCase().replace(/[^a-z\s']/g, " ").replace(/\s+/g, " ").trim();
+  for (const [abbr, names] of TR_NAMES) {
+    const named = `(?:the\\s+|a\\s+)?(?:${names})`;
+    if (new RegExp(`\\b${TR_TRIGGER}\\s+${named}${TR_TAIL}(?=\\s|$)`).test(t)) return abbr;
+    if (whole && new RegExp(`^(?:ok(?:ay)?\\s+|now\\s+)?${named}${TR_TAIL}$`).test(t)) return abbr;
+  }
+  return null;
+}
+
+if (typeof module !== "undefined") module.exports = { detectReferences, detectCommands, detectGoTo, relativeRef, detectTranslation };
