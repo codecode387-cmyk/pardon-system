@@ -236,7 +236,7 @@ async function loadTranslations() {
   const sel = $("tr");
   const groups = {};
   for (const t of data.translations) (groups[t.group] = groups[t.group] || []).push(t);
-  for (const g of Object.keys(groups)) {
+  for (const g of Object.keys(groups).sort((a, b) => (a === "Free" ? -1 : 0) - (b === "Free" ? -1 : 0))) {
     const og = document.createElement("optgroup");
     og.label = g;
     for (const t of groups[g]) {
@@ -248,14 +248,12 @@ async function loadTranslations() {
   }
   let saved = null;
   try { saved = localStorage.getItem("vs:tr"); } catch (_) {}
-  if (saved && [...sel.options].some((o) => o.value === saved)) sel.value = saved;
+  sel.value = saved && [...sel.options].some((o) => o.value === saved) ? saved : "free:kjv";
 
   const warn = (data.warnings || [])[0];
   let dismissed = false;
   try { dismissed = localStorage.getItem("vs:notice") === "1"; } catch (_) {}
-  if (err && via === "server") showNotice("The /api folder was not found on your site. Open “Not seeing NIV…” under the translation box and paste your API.Bible key there. That works without the api folder.");
-  else if (warn) showNotice(warn);
-  else if (!dismissed && !data.bible) showNotice("Only the free translations are available. To add NIV, NKJV, NLT and others, connect an API.Bible key (steps are in the README).");
+  if (warn && (via === "browser" || data.bible)) showNotice(warn);       // only speak up when a key you added has a problem
   else if (!dismissed && data.hint) showNotice(data.hint);
 }
 function diagnose(data, err, via) {
@@ -302,12 +300,10 @@ const localKey = () => { try { return localStorage.getItem("vs:bkey") || ""; } c
 async function fetchVerse(ref, step) {
   const t = $("tr").value;
   const done = (d) => ({ ref: d.ref || ref, reference: d.reference, text: d.text, translation: trLabel(), copyright: d.copyright || "" });
-  const direct = async () => {
-    if (typeof BibleCore === "undefined") throw new Error("bible.js was not uploaded to GitHub.");
-    return done(await BibleCore.lookup({ ref, t, nav: step && step.nav, unit: step && step.unit }, { bibleKey: localKey() }));
-  };
-  if (localKey() && t.startsWith("bible:")) return direct();     // key saved in this browser: go straight to API.Bible
-  try {
+  const hasCore = typeof BibleCore !== "undefined";
+  const direct = () => BibleCore.lookup({ ref, t, nav: step && step.nav, unit: step && step.unit }, { bibleKey: localKey() }).then(done);
+  if (hasCore && localKey() && t.startsWith("bible:")) return direct();   // key saved in this browser
+  try {                                                                    // 1st choice: your own /api function
     const nav = step ? `&nav=${step.nav}&unit=${step.unit}` : "";
     const r = await fetch(`/api/verse?ref=${encodeURIComponent(ref)}&t=${encodeURIComponent(t)}${nav}`);
     const d = await r.json().catch(() => null);
@@ -316,7 +312,16 @@ async function fetchVerse(ref, step) {
   } catch (e) {
     if (e.final) throw e;
   }
-  return direct();                                               // the server is missing or failed: ask the Bible services directly
+  if (hasCore) return direct();                                            // 2nd choice: ask the Bible services directly
+  if (t.startsWith("free:") && !step) {                                    // 3rd choice (bible.js not uploaded): plain free lookup
+    const r = await fetch(`https://bible-api.com/${encodeURIComponent(ref.replace(/^Psalms/, "Psalm"))}?translation=${t.slice(5)}`);
+    if (!r.ok) throw new Error("Verse not found");
+    const d = await r.json();
+    let text = (d.text || "").replace(/\s*\n+\s*/g, " ").trim();
+    if (text.length > 1000) text = text.slice(0, text.lastIndexOf(" ", 1000)) + "…";
+    return done({ reference: d.reference, text });
+  }
+  throw new Error("Could not load this. Upload bible.js (and the api folder) to GitHub.");
 }
 
 function send(payload) {
