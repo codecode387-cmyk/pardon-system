@@ -233,7 +233,8 @@ async function loadTranslations() {
   let dismissed = false;
   try { dismissed = localStorage.getItem("vs:notice") === "1"; } catch (_) {}
   if (warn) showNotice(warn);
-  else if (!data.bible && !dismissed) showNotice("Only the free translations are available. To add NIV, NKJV, NLT and others, connect an API.Bible key (steps are in the README).");
+  else if (!dismissed && !data.bible) showNotice("Only the free translations are available. To add NIV, NKJV, NLT and others, connect an API.Bible key (steps are in the README).");
+  else if (!dismissed && data.hint) showNotice(data.hint);
 }
 function showNotice(t) { $("noticeTxt").textContent = t; $("notice").hidden = false; }
 $("noticeX").onclick = () => { $("notice").hidden = true; try { localStorage.setItem("vs:notice", "1"); } catch (_) {} };
