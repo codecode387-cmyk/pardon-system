@@ -63,6 +63,9 @@
   .nav svg { flex:none; }
   #navMsg { min-height:20px; margin:8px 0 0; color:var(--mute); font-size:13px; }
   #navMsg.bad { color:var(--live); }
+  details.help { flex-basis:100%; color:var(--mute); font-size:14px; }
+  details.help summary { cursor:pointer; }
+  details.help p { margin:8px 0 0; }
   .manual { display:flex; gap:8px; }
   .manual input { width:230px; }
   #msg { min-height:20px; margin:0 0 10px; color:var(--mute); font-size:14px; }
@@ -136,7 +139,8 @@
           </select>
         </label>
         <label class="grow"><input type="checkbox" id="auto"> Show detected verses automatically</label>
-        <label class="grow"><input type="checkbox" id="voice" checked> Move when they say "next verse", "previous verse" or "next chapter"</label>
+        <label class="grow"><input type="checkbox" id="voice" checked> Voice commands: "next", "go back", "go to verse 5", "go to John 3:16"</label>
+        <details class="help"><summary>Not seeing NIV, NLT or other translations?</summary><div id="trStatus"><p>Checking…</p></div></details>
       </div>
     </section>
 
@@ -150,7 +154,7 @@
       </div>
       <p id="msg" role="status"></p>
       <div id="list"><p class="empty">Verses appear here as they are spoken.</p></div>
-      <p class="keys">Enter shows the newest verse. Esc clears the screen. The left and right arrow keys move one verse; hold Shift to move one chapter.</p>
+      <p class="keys">Enter shows the newest verse. Esc clears the screen. The left and right arrow keys move one verse; hold Shift to move one chapter. Say "next", "go back", "go to verse 5" or "go to John 3:16" to do the same by voice.</p>
     </section>
   </div>
 </main>
@@ -201,17 +205,19 @@ scalePreview();
 /* ---------- translations ---------- */
 let translationInfo = {};
 async function loadTranslations() {
-  let data;
+  let data, err = "";
   try {
     const r = await fetch("/api/translations");
-    if (!r.ok) throw new Error();
+    if (!r.ok) throw new Error("status " + r.status);
     data = await r.json();
-  } catch (_) {
+  } catch (e) {
+    err = e.message || "network error";
     data = { translations: [
       { id: "free:kjv", abbr: "KJV", name: "King James Version", group: "Free" },
       { id: "free:web", abbr: "WEB", name: "World English Bible", group: "Free" } ], bible: false };
   }
   translationInfo = data;
+  diagnose(data, err);
   const sel = $("tr");
   const groups = {};
   for (const t of data.translations) (groups[t.group] = groups[t.group] || []).push(t);
@@ -232,9 +238,25 @@ async function loadTranslations() {
   const warn = (data.warnings || [])[0];
   let dismissed = false;
   try { dismissed = localStorage.getItem("vs:notice") === "1"; } catch (_) {}
-  if (warn) showNotice(warn);
+  if (err) showNotice("The /api folder was not found on your site, so only KJV and WEB work. Open “Not seeing NIV…” under the translation box for the fix.");
+  else if (warn) showNotice(warn);
   else if (!dismissed && !data.bible) showNotice("Only the free translations are available. To add NIV, NKJV, NLT and others, connect an API.Bible key (steps are in the README).");
   else if (!dismissed && data.hint) showNotice(data.hint);
+}
+function diagnose(data, err) {
+  const lines = [];
+  if (err) lines.push(`The /api functions cannot be reached (${err}). The api folder must be in GitHub at the top level, next to index.html. Upload it, then wait for Vercel to redeploy.`);
+  else if (!data.bible) lines.push("No API.Bible key was found by the server. In Vercel go to Settings, Environment Variables, add BIBLE_API_KEY with your key, then open Deployments and click Redeploy.");
+  else {
+    lines.push("The API.Bible key was found.");
+    if (data.warnings && data.warnings.length) lines.push("Problem: " + data.warnings[0]);
+    else {
+      const f = data.found || [];
+      lines.push(`API.Bible gave this key ${f.length} English Bible${f.length === 1 ? "" : "s"}: ${f.slice(0, 40).join(", ") || "none"}.`);
+      if (data.hint) lines.push(data.hint);
+    }
+  }
+  $("trStatus").replaceChildren(...lines.map((l) => { const p = document.createElement("p"); p.textContent = l; return p; }));
 }
 function showNotice(t) { $("noticeTxt").textContent = t; $("notice").hidden = false; }
 $("noticeX").onclick = () => { $("notice").hidden = true; try { localStorage.setItem("vs:notice", "1"); } catch (_) {} };
@@ -408,6 +430,7 @@ function startListening() {
     }
     if (fin) runVoice(commandsIn(fin).slice(interimFired));
     if (fin) interimFired = 0;
+    if (fin) runFinalCommands(fin);
     const live = commandsIn(interim);
     if (live.length > interimFired) runVoice(live.slice(interimFired));
     interimFired = live.length;
@@ -550,6 +573,34 @@ let interimFired = 0;                                  // commands already acted
 function runVoice(cmds) {
   if (!$("voice").checked || !current) return;
   cmds.forEach(([n, u]) => navigate(n, u, "Voice"));
+}
+
+function goToRef(ref) {                                 // "go to John 3:16": show it straight away
+  const k = lower(ref);
+  seen.set(k, Date.now());
+  const it = items.find((i) => lower(i.ref) === k);
+  if (it && it.verse) publish(it.verse);
+  else if (it) loadItem(it, true);
+  else addItem(ref, true);
+  showNav("Voice: " + ref);
+}
+function jumpRelative(cmd) {                            // "go to verse 5" in the chapter on screen
+  navChain = navChain.then(async () => {
+    const ref = current && relativeRef(current.ref, cmd);
+    if (!ref) return;
+    try { const v = await fetchVerse(ref); publish(v); showNav("Voice: " + v.reference); }
+    catch (e) { showNav(e.message, true); }
+  });
+}
+function runFinalCommands(text) {                       // runs on finished sentences only, so "next week" is never mistaken for "next"
+  if (!$("voice").checked) return;
+  for (const c of detectCommands(text, true)) {
+    if (c.explicit) continue;                           // "next verse" etc. are handled live above
+    if (c.type === "ref") goToRef(c.ref);
+    else if (!current) showNav("Show a verse first, then I can move around it.", true);
+    else if (c.type === "step") navigate(c.nav, c.unit, "Voice");
+    else jumpRelative(c);
+  }
 }
 
 /* ---------- service notes ---------- */
