@@ -1,21 +1,39 @@
 // Finds Bible references in spoken or typed text.
 // Handles: "John 3:16", "Romans chapter eight verse twenty eight", "first Corinthians 13 verses 4 to 7",
-// "Psalm twenty three", "Matthew five and verse three", plus common mis-hearings (roman, galations...).
+// "Psalm twenty three", "John three colon sixteen", "Jude 5", plus common mis-hearings.
+// New: chapter numbers are checked against the real Bible (no more "Romans 40"), and
+// single-chapter books are understood ("Jude 5" = Jude 1:5).
 
 const BOOKS = [
-  ["Genesis"], ["Exodus"], ["Leviticus"], ["Numbers"], ["Deuteronomy"], ["Joshua"], ["Judges"], ["Ruth"],
+  ["Genesis"], ["Exodus"], ["Leviticus"], ["Numbers"], ["Deuteronomy", "duteronomy"], ["Joshua"], ["Judges"], ["Ruth"],
   ["1 Samuel"], ["2 Samuel"], ["1 Kings"], ["2 Kings"], ["1 Chronicles"], ["2 Chronicles"],
-  ["Ezra"], ["Nehemiah"], ["Esther"], ["Job"], ["Psalms", "psalm"], ["Proverbs", "proverb"],
-  ["Ecclesiastes"], ["Song of Solomon", "song of songs", "songs of solomon"], ["Isaiah", "isiah"], ["Jeremiah"],
-  ["Lamentations"], ["Ezekiel", "ezekial"], ["Daniel"], ["Hosea"], ["Joel"], ["Amos"], ["Obadiah"], ["Jonah"],
-  ["Micah"], ["Nahum"], ["Habakkuk", "habakuk"], ["Zephaniah"], ["Haggai"], ["Zechariah", "zachariah"], ["Malachi"],
-  ["Matthew", "mathew"], ["Mark"], ["Luke"], ["John"], ["Acts"], ["Romans", "roman"],
-  ["1 Corinthians", "1 corinthian"], ["2 Corinthians", "2 corinthian"], ["Galatians", "galations"],
-  ["Ephesians"], ["Philippians", "phillipians"], ["Colossians", "colosians"],
-  ["1 Thessalonians"], ["2 Thessalonians"], ["1 Timothy"], ["2 Timothy"], ["Titus"], ["Philemon"],
-  ["Hebrews"], ["James"], ["1 Peter"], ["2 Peter"], ["1 John"], ["2 John"], ["3 John"], ["Jude"],
+  ["Ezra"], ["Nehemiah"], ["Esther"], ["Job"], ["Psalms", "psalm", "the psalms"], ["Proverbs", "proverb"],
+  ["Ecclesiastes"], ["Song of Solomon", "song of songs", "songs of solomon", "song of solomon's"], ["Isaiah", "isiah", "isaih"], ["Jeremiah"],
+  ["Lamentations"], ["Ezekiel", "ezekial", "ezekeil"], ["Daniel"], ["Hosea"], ["Joel"], ["Amos"], ["Obadiah"], ["Jonah"],
+  ["Micah"], ["Nahum"], ["Habakkuk", "habakuk", "habbakuk"], ["Zephaniah"], ["Haggai"], ["Zechariah", "zachariah"], ["Malachi"],
+  ["Matthew", "mathew"], ["Mark"], ["Luke"], ["John"], ["Acts", "acts of the apostles"], ["Romans", "roman"],
+  ["1 Corinthians", "1 corinthian"], ["2 Corinthians", "2 corinthian"], ["Galatians", "galations", "galatian"],
+  ["Ephesians", "ephesian", "efesians"], ["Philippians", "phillipians", "philippian", "filipians", "philipians"], ["Colossians", "colosians", "colossian"],
+  ["1 Thessalonians", "1 thessalonian"], ["2 Thessalonians", "2 thessalonian"], ["1 Timothy"], ["2 Timothy"], ["Titus"], ["Philemon", "filemon"],
+  ["Hebrews", "hebrew"], ["James"], ["1 Peter"], ["2 Peter"], ["1 John"], ["2 John"], ["3 John"], ["Jude"],
   ["Revelation", "revelations"],
 ];
+
+// Number of chapters in each book, in the same order as BOOKS.
+const CHAPTER_COUNTS = [
+  50, 40, 27, 36, 34, 24, 21, 4,
+  31, 24, 22, 25, 29, 36,
+  10, 13, 10, 42, 150, 31,
+  12, 8, 66, 52,
+  5, 48, 12, 14, 3, 9, 1, 4,
+  7, 3, 3, 3, 2, 14, 4,
+  28, 16, 24, 21, 28, 16,
+  16, 13, 6, 6, 4, 4,
+  5, 3, 6, 4, 3, 1,
+  13, 5, 5, 3, 5, 1, 1, 1, 22,
+];
+const CHAPTERS = {};
+BOOKS.forEach(([canon], i) => { CHAPTERS[canon] = CHAPTER_COUNTS[i]; });
 
 const ALIASES = [];
 for (const [canon, ...extra] of BOOKS) {
@@ -54,13 +72,14 @@ function wordsToDigits(text) {
   return out.join(" ");
 }
 
-const NUMBERED = "(samuel|kings|chronicles|corinthians|corinthian|thessalonians|timothy|peter|john)";
+const NUMBERED = "(samuel|kings|chronicles|corinthians|corinthian|thessalonians|thessalonian|timothy|peter|john)";
 function normalize(text) {
   let t = text.toLowerCase().replace(/[,;!?"“”]/g, " ").replace(/\.(?=\s|$)/g, " ");
+  t = t.replace(/([a-z])-(?=[a-z])/g, "$1 ");                  // "twenty-eight" -> "twenty eight"
   t = t.replace(new RegExp(`\\b(first|1st|i)\\s+(?=${NUMBERED}\\b)`, "g"), "1 ");
   t = t.replace(new RegExp(`\\b(second|2nd|ii)\\s+(?=${NUMBERED}\\b)`, "g"), "2 ");
   t = t.replace(/\b(third|3rd|iii)\s+(?=john\b)/g, "3 ");
-  return wordsToDigits(t);
+  return wordsToDigits(t).replace(/(\d)\s+colon\s+(\d)/g, "$1:$2");   // "3 colon 16" -> "3:16"
 }
 
 const NAMES = ALIASES.map(([n]) => n.replace(/ /g, "\\s+")).join("|");
@@ -77,9 +96,13 @@ function scanRefs(t) {
   while ((m = REF_RE.exec(t)) !== null) {
     const book = ALIAS_MAP[m[1].replace(/\s+/g, " ")];
     if (!book) continue;
-    const [, , ch, v1, v2] = m;
+    let ch = +m[2], v1 = m[3] ? +m[3] : 0;
+    const v2 = m[4] ? +m[4] : 0;
+    const max = CHAPTERS[book];
+    if (max === 1 && ch > 1 && !v1) { v1 = ch; ch = 1; }     // "Jude 5" means Jude 1:5
+    if (ch < 1 || ch > max) continue;                          // "Romans 40" is not a real chapter
     let ref = `${book} ${ch}`;
-    if (v1) ref += `:${v1}` + (v2 && +v2 > +v1 ? `-${v2}` : "");
+    if (v1) ref += `:${v1}` + (v2 && v2 > v1 ? `-${v2}` : "");
     found.push({ ref, index: m.index });
   }
   return found;
