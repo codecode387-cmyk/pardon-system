@@ -297,7 +297,20 @@ $("layout").onchange = () => { if (current) publish(current, false); };
 
 /* ---------- fetching and showing verses ---------- */
 
-async function fetchVerse(ref, step) {
+// Cache: the same verse in the same translation is only fetched once. Failed lookups are not kept.
+const vcache = new Map();
+function fetchVerse(ref, step) {
+  const key = [$("tr").value, ref, step ? step.nav + step.unit : ""].join("|");
+  if (!vcache.has(key)) {
+    const p = fetchVerseRaw(ref, step);
+    p.catch(() => vcache.delete(key));
+    vcache.set(key, p);
+    if (vcache.size > 200) vcache.delete(vcache.keys().next().value);
+  }
+  return vcache.get(key);
+}
+
+async function fetchVerseRaw(ref, step) {
   const t = $("tr").value;
   const done = (d) => ({ ref: d.ref || ref, reference: d.reference, text: d.text, translation: trLabel(), copyright: d.copyright || "" });
   const hasCore = typeof BibleCore !== "undefined";
@@ -332,6 +345,7 @@ function publish(verse, record = true) {
   current = verse;
   if (record) { Store.addVerse(verse); refreshSessionBar(); }
   send({ type: "show", verse, layout: $("layout").value, ts: Date.now() });
+  fetchVerse(verse.ref, { nav: "next", unit: "verse" }).catch(() => {});   // get the next verse ready so "next" is instant
   markOnScreen();
 }
 function clearScreen() {
@@ -411,15 +425,21 @@ function consider(ref) {
   addItem(ref, $("auto").checked);
 }
 
-const windowText = () => finalBuf.slice(-300) + " " + interim;
+let lastFinalAt = 0;
+// Old finished text is only used for 20 seconds, so a verse from minutes ago can never pop up again after a pause.
+const windowText = () => (Date.now() - lastFinalAt < 20000 ? finalBuf.slice(-300) : "") + " " + interim;
 
-function tick() {                       // runs a few times a second while listening
+function tick() {                       // runs 5 times a second while listening
   if (!listening) return;
   const refs = new Set(detectReferences(windowText()));
-  for (const r of refs) { pending[r] = (pending[r] || 0) + 1; if (pending[r] >= 2) consider(r); }
+  for (const r of refs) {
+    pending[r] = (pending[r] || 0) + 1;
+    const need = r.includes(":") ? 2 : 4;   // a bare chapter waits a little longer, the verse number may still be coming
+    if (pending[r] >= need) consider(r);
+  }
   for (const r of Object.keys(pending)) if (!refs.has(r)) delete pending[r];
 }
-setInterval(tick, 450);
+setInterval(tick, 200);
 
 function renderTranscript() {
   const box = $("transcript");
@@ -435,6 +455,32 @@ function setMic(state, text) {
   $("micTxt").textContent = text;
 }
 
+/* ---------- long-running listening ---------- */
+let recActive = false, lastEnd = 0, lastActivity = 0, failCount = 0, wakeLock = null;
+
+function restart(delay) {
+  clearTimeout(restartTimer);
+  restartTimer = setTimeout(() => {
+    if (!listening || recActive) return;
+    try { recog.lang = $("lang").value; recog.start(); } catch (_) {}
+  }, delay);
+}
+async function keepAwake(on) {                       // stops the computer screen from sleeping during the service
+  try {
+    if (on && "wakeLock" in navigator) wakeLock = await navigator.wakeLock.request("screen");
+    else if (wakeLock) { await wakeLock.release(); wakeLock = null; }
+  } catch (_) {}
+}
+document.addEventListener("visibilitychange", () => { if (listening && document.visibilityState === "visible") keepAwake(true); });
+
+// Watchdog: if the engine died silently or went quiet for 90 seconds, reset it.
+setInterval(() => {
+  if (!listening) return;
+  const now = Date.now();
+  if (!recActive && now - lastEnd > 3000) restart(0);
+  else if (recActive && now - lastActivity > 90000) { lastActivity = now; try { recog.abort(); } catch (_) {} }
+}, 3000);
+
 function startListening() {
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!SR) { setMic("off", "Use Chrome or Edge"); return; }
@@ -442,7 +488,9 @@ function startListening() {
   recog.continuous = true;
   recog.interimResults = true;
   recog.lang = $("lang").value;
+  recog.onstart = () => { recActive = true; lastActivity = Date.now(); setMic("live", "Listening"); };
   recog.onresult = (e) => {
+    lastActivity = Date.now(); failCount = 0;
     let fin = "";
     interim = "";
     for (let i = e.resultIndex; i < e.results.length; i++) {
@@ -456,7 +504,7 @@ function startListening() {
     if (live.length > interimFired) runVoice(live.slice(interimFired));
     interimFired = live.length;
     if (fin) {
-      finalBuf += fin;
+      finalBuf = (finalBuf + fin).slice(-3000); lastFinalAt = Date.now();
       if (!Store.addSpeech(fin)) saveFailed(); else refreshSessionBar();
       detectReferences(windowText()).forEach(consider);   // final text is stable, so act at once
     }
@@ -465,17 +513,18 @@ function startListening() {
   recog.onerror = (e) => {
     if (e.error === "no-speech" || e.error === "aborted") return;
     if (e.error === "language-not-supported") { $("lang").value = "en-US"; return; }
-    const why = { "not-allowed": "Microphone blocked. Allow it in the address bar.",
+    const fatal = { "not-allowed": "Microphone blocked. Allow it in the address bar.",
       "service-not-allowed": "Microphone blocked. Allow it in the address bar.",
-      "audio-capture": "No microphone found.", "network": "Needs an internet connection." }[e.error] || e.error;
-    setMic("off", why);
+      "audio-capture": "No microphone found." };
+    if (fatal[e.error]) { stopListening(); setMic("off", fatal[e.error]); return; }   // no point retrying
+    failCount++;
+    setMic("live", e.error === "network" ? "Reconnecting…" : "Retrying…");          // onend restarts it
   };
-  recog.onend = () => {                  // the browser stops after silence, so start again
-    if (!listening) return;
-    clearTimeout(restartTimer);
-    restartTimer = setTimeout(() => { try { recog.lang = $("lang").value; recog.start(); } catch (_) {} }, 300);
+  recog.onend = () => {                  // the browser stops after silence, so start again (slower if it keeps failing)
+    recActive = false; lastEnd = Date.now();
+    if (listening) restart(Math.min(300 * 2 ** failCount, 5000));
   };
-  listening = true;
+  listening = true; lastEnd = Date.now(); lastActivity = Date.now(); failCount = 0; keepAwake(true);
   Store.ensureActive(); refreshSessionBar();
   try { recog.start(); } catch (_) {}
   $("mic").textContent = "Stop listening"; $("mic").className = "btn live big";
@@ -485,6 +534,7 @@ function startListening() {
 
 function stopListening() {
   listening = false;
+  keepAwake(false);
   clearTimeout(restartTimer);
   try { recog && recog.stop(); } catch (_) {}
   interim = ""; renderTranscript();
