@@ -77,6 +77,12 @@
   .item .tag { margin-left:8px; font-size:12px; font-weight:500; color:var(--ok); }
   .snippet { margin:0; color:var(--mute); font-size:14px; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
   .actions { display:flex; gap:8px; flex:none; }
+  .relay { margin-top:14px; }
+  .relay label { display:block; color:var(--mute); font-size:13px; margin-bottom:6px; }
+  .relay .row { display:flex; gap:8px; }
+  .relay input { flex:1; min-width:0; }
+  #relayMsg { min-height:20px; margin:6px 0 0; color:var(--mute); font-size:13px; }
+  #relayMsg.bad { color:var(--live); }
   .empty, .keys { margin:0; color:var(--mute); font-size:14px; }
   .keys { margin-top:12px; }
 </style>
@@ -125,6 +131,14 @@
         <button class="btn" id="clear">Clear screen</button>
       </div>
       <div class="preview" id="previewBox"><iframe id="previewFrame" src="display.html?preview=1" title="Display preview"></iframe></div>
+      <div class="relay">
+        <label for="relayLink">Display link for EasyWorship's browser, OBS or another computer (add &amp;bg=black for a flat black background)</label>
+        <div class="row">
+          <input type="text" id="relayLink" readonly>
+          <button class="btn" type="button" id="relayCopy">Copy</button>
+        </div>
+        <p id="relayMsg" role="status"></p>
+      </div>
       <div class="nav" role="group" aria-label="Move through the Bible">
         <button class="btn" id="prevCh" disabled><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 6l-6 6 6 6M19 6l-6 6 6 6"/></svg> Chapter</button>
         <button class="btn" id="prevV" disabled><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg> Verse</button>
@@ -337,9 +351,45 @@ async function fetchVerseRaw(ref, step) {
   throw new Error("Could not load this. Upload bible.js (and the api folder) to GitHub.");
 }
 
+/* ---------- relay: lets a display in ANY browser (EasyWorship, OBS, another computer) follow this page ---------- */
+const room = (() => {
+  let r = "";
+  try { r = localStorage.getItem("vs:room") || ""; } catch (_) {}
+  if (!/^[a-z0-9]{8,40}$/.test(r)) {
+    r = Array.from(crypto.getRandomValues(new Uint8Array(10)), (b) => "abcdefghijkmnpqrstuvwxyz23456789"[b % 32]).join("");
+    try { localStorage.setItem("vs:room", r); } catch (_) {}
+  }
+  return r;
+})();
+$("relayLink").value = new URL("display.html", location.href).href + "?room=" + room;
+$("relayCopy").onclick = async () => {
+  try { await navigator.clipboard.writeText($("relayLink").value); }
+  catch (_) { $("relayLink").select(); document.execCommand("copy"); }
+  $("relayCopy").textContent = "Copied";
+  setTimeout(() => { $("relayCopy").textContent = "Copy"; }, 1500);
+};
+function relayStatus(ok, text) { $("relayMsg").textContent = text; $("relayMsg").classList.toggle("bad", !ok); }
+async function relayCall(method, payload) {
+  try {
+    const opts = method === "POST"
+      ? { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }
+      : { cache: "no-store" };
+    const r = await fetch("/api/state?room=" + room, opts);
+    if (r.ok) { relayStatus(true, "Relay connected. Displays opened with this link follow this page."); return; }
+    const d = await r.json().catch(() => null);
+    relayStatus(false, r.status === 501
+      ? "Relay is not set up yet. Connect an Upstash Redis store in Vercel and redeploy. The same-browser display still works."
+      : "Relay problem: " + ((d && d.error) || r.status));
+  } catch (_) { relayStatus(false, "Relay not reachable (no internet, or the api folder is missing)."); }
+}
+let relayChain = Promise.resolve();                       // one message at a time, so they arrive in order
+function relay(payload) { relayChain = relayChain.then(() => relayCall("POST", payload)); }
+relayCall("GET");
+
 function send(payload) {
   try { localStorage.setItem(LS, JSON.stringify(payload)); } catch (_) {}
   channel.postMessage(payload);
+  relay(payload);
 }
 function publish(verse, record = true) {
   current = verse;
