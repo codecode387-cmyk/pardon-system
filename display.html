@@ -11,6 +11,7 @@
   :root { --text:#f4f2ed; --ref:#a9c0ff; --mute:#8d97b5; }
   * { box-sizing:border-box; }
   html, body { height:100%; margin:0; }
+  html { background:#000; }
   body {
     display:flex; align-items:center; justify-content:center; overflow:hidden; color:var(--text);
     font-family: Lora, Georgia, "Times New Roman", serif;
@@ -20,6 +21,9 @@
       #080d20;
   }
   body.idle { cursor:none; }
+
+  /* ?bg=black : plain black background instead of the blue gradient (clean for EasyWorship / OBS capture) */
+  body.bgblack { background:#000; }
 
   .stage { width:min(1500px, 86vw); opacity:0; transition:opacity .25s ease; }
   .stage.show { opacity:1; }
@@ -33,8 +37,12 @@
   #tr { color:var(--ref); font-weight:600; font-size:clamp(14px, 2.2vh, 24px); }
   #copy { color:var(--mute); font-weight:500; font-size:clamp(10px, 1.4vh, 15px); max-width:70ch; }
 
-  /* Lower third: sits at the bottom of the picture, good for live streams */
-  body[data-layout="lower"] { background:transparent; align-items:flex-end; padding-bottom:5vh; }
+  /* Lower third: sits at the bottom of the picture.
+     Solid black behind it by default, so it never turns white in a window capture or a projector.
+     Add ?alpha=1 only when this page is used as an OBS Browser Source and you want it see-through. */
+  body[data-layout="lower"] { background:#000; align-items:flex-end; padding-bottom:5vh; }
+  body.alpha[data-layout="lower"] { background:transparent; }
+  html.alpha { background:transparent; }
   body[data-layout="lower"] .stage {
     width:92vw; padding:2.2vh 2.4vw; border-radius:14px; border-left:6px solid var(--ref);
     background:rgba(8,13,32,.9);
@@ -57,14 +65,18 @@
 <div id="idle">Waiting for a verse</div>
 
 <script>
+  // Options in the address, e.g.  display.html?bg=black   or   display.html?alpha=1
   const params = new URLSearchParams(location.search);
   const preview = params.has("preview");
   const LS = "vs:current";
-  const ch = new BroadcastChannel("verse-screen");
+  // Some embedded browsers have no BroadcastChannel. The page then still works through the storage channel below.
+  const ch = ("BroadcastChannel" in window) ? new BroadcastChannel("verse-screen") : { postMessage() {}, set onmessage(_) {} };
   const $ = (id) => document.getElementById(id);
   let lastTs = 0, hideTimer = null;
 
   if (preview) document.body.classList.add("preview");
+  if (params.get("bg") === "black") document.body.classList.add("bgblack");
+  if (params.has("alpha")) { document.body.classList.add("alpha"); document.documentElement.classList.add("alpha"); }
   document.body.classList.add("empty");
 
   function fit() {
@@ -131,6 +143,26 @@
     clearTimeout(hideTimer);
     hideTimer = setTimeout(() => document.body.classList.add("idle"), 2000);
   });
+
+  // Fullscreen: double-click the screen or press F (the same as F11, but also works when captured)
+  function toggleFullscreen() {
+    try {
+      if (document.fullscreenElement) document.exitFullscreen();
+      else document.documentElement.requestFullscreen();
+    } catch (_) {}
+  }
+  if (!preview) {
+    addEventListener("dblclick", toggleFullscreen);
+    addEventListener("keydown", (e) => { if (e.key === "f" || e.key === "F") toggleFullscreen(); });
+
+    // Keep the projector computer awake for the whole service
+    let wake = null;
+    const keepAwake = async () => {
+      try { if ("wakeLock" in navigator) wake = await navigator.wakeLock.request("screen"); } catch (_) {}
+    };
+    keepAwake();
+    document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") keepAwake(); });
+  }
 </script>
 </body>
 </html>
