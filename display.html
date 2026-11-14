@@ -65,9 +65,13 @@
 <div id="idle">Waiting for a verse</div>
 
 <script>
-  // Options in the address, e.g.  display.html?bg=black   or   display.html?alpha=1
+  // Options in the address:
+  //   display.html                      same browser as the operator page (instant)
+  //   display.html?room=CODE            works in ANY browser or program (EasyWorship browser, OBS...) through the relay
+  //   &bg=black   flat black background      &alpha=1   see-through lower third (OBS Browser Source only)
   const params = new URLSearchParams(location.search);
   const preview = params.has("preview");
+  const room = (params.get("room") || "").trim().toLowerCase();
   const LS = "vs:current";
   // Some embedded browsers have no BroadcastChannel. The page then still works through the storage channel below.
   const ch = ("BroadcastChannel" in window) ? new BroadcastChannel("verse-screen") : { postMessage() {}, set onmessage(_) {} };
@@ -112,8 +116,10 @@
     document.body.classList.add("empty");
   }
 
+  // Each message has a time stamp. The same or an older one is ignored, so the same-browser
+  // channel and the relay can both deliver without showing anything twice or going backwards.
   function apply(m) {
-    if (!m || (m.ts && m.ts === lastTs)) return;
+    if (!m || (m.ts && m.ts <= lastTs)) return;
     if (m.ts) lastTs = m.ts;
     if (m.type === "show") render(m.verse, m.layout);
     else if (m.type === "clear") clearScreen();
@@ -133,6 +139,28 @@
     const saved = JSON.parse(localStorage.getItem(LS) || "null");
     if (saved && Date.now() - saved.ts < 6 * 3600 * 1000) apply(saved);
   } catch (_) {}
+
+  /* ---------- relay: works when the display is NOT in the same browser as the operator page ---------- */
+  if (room && !preview) {
+    let lastChange = Date.now();
+    const poll = async () => {
+      try {
+        const r = await fetch("/api/state?room=" + encodeURIComponent(room), { cache: "no-store" });
+        if (r.ok) {
+          const d = await r.json();
+          const s = d && d.state;
+          if (s && !(s.ts && Date.now() - s.ts > 6 * 3600 * 1000)) {
+            const before = lastTs;
+            apply(s);
+            if (lastTs !== before) lastChange = Date.now();
+          }
+        }
+      } catch (_) { /* internet blip: just try again */ }
+      // quick while the service is active, slower when nothing has changed for a while
+      setTimeout(poll, Date.now() - lastChange < 30000 ? 600 : 1500);
+    };
+    poll();
+  }
 
   addEventListener("resize", fit);
   if (document.fonts && document.fonts.ready) document.fonts.ready.then(fit);
