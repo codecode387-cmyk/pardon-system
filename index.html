@@ -77,6 +77,26 @@
   .item .tag { margin-left:8px; font-size:12px; font-weight:500; color:var(--ok); }
   .snippet { margin:0; color:var(--mute); font-size:14px; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
   .actions { display:flex; gap:8px; flex:none; }
+  .rowset { display:flex; flex-wrap:wrap; gap:10px 16px; margin:14px 0 0; }
+  .rowset label { display:flex; align-items:center; gap:8px; color:var(--mute); font-size:13px; }
+  .rowset select { max-width:230px; }
+  #engineNote { min-height:18px; margin:6px 0 0; color:var(--mute); font-size:13px; }
+  #engineNote.bad { color:var(--live); }
+  .tbar { display:flex; gap:8px; margin-top:10px; }
+  .ac { position:relative; }
+  #sug { position:absolute; left:0; top:calc(100% + 4px); width:270px; max-height:290px; overflow:auto; margin:0; padding:4px;
+         list-style:none; background:var(--panel-2); border:1px solid var(--line); border-radius:10px;
+         box-shadow:0 10px 30px rgba(0,0,0,.45); z-index:20; }
+  #sug[hidden] { display:none; }
+  #sug li { padding:9px 12px; border-radius:6px; cursor:pointer; font-size:15px; display:flex; justify-content:space-between; gap:12px; }
+  #sug li small { opacity:.6; white-space:nowrap; }
+  #sug li.on, #sug li:hover { background:var(--accent); color:var(--accent-ink); }
+  .relay { margin-top:14px; }
+  .relay label { display:block; color:var(--mute); font-size:13px; margin-bottom:6px; }
+  .relay .row { display:flex; gap:8px; }
+  .relay input { flex:1; min-width:0; }
+  #relayMsg { min-height:20px; margin:6px 0 0; color:var(--mute); font-size:13px; }
+  #relayMsg.bad { color:var(--live); }
   .empty, .keys { margin:0; color:var(--mute); font-size:14px; }
   .keys { margin-top:12px; }
 </style>
@@ -107,6 +127,18 @@
     </div>
     <p id="svcStats" role="status"></p>
     <canvas id="meter" aria-label="Microphone level"></canvas>
+    <div class="rowset">
+      <label>Listening engine
+        <select id="engine">
+          <option value="deepgram">Deepgram (most accurate)</option>
+          <option value="browser">Browser (free)</option>
+        </select>
+      </label>
+      <label>Microphone
+        <select id="micSel"><option value="">Default microphone</option></select>
+      </label>
+    </div>
+    <p id="engineNote" role="status"></p>
     <div class="controls">
       <button class="btn primary big" id="mic">Start listening</button>
       <select id="lang" aria-label="Speech language">
@@ -116,6 +148,10 @@
       </select>
     </div>
     <div class="transcript" id="transcript" aria-live="polite"><span class="ph">What is being said will appear here.</span></div>
+    <div class="tbar">
+      <button class="btn" type="button" id="tCopy">Copy everything</button>
+      <button class="btn" type="button" id="tSave">Download .txt</button>
+    </div>
   </section>
 
   <div class="stack">
@@ -125,6 +161,14 @@
         <button class="btn" id="clear">Clear screen</button>
       </div>
       <div class="preview" id="previewBox"><iframe id="previewFrame" src="display.html?preview=1" title="Display preview"></iframe></div>
+      <div class="relay">
+        <label for="relayLink">Display link for EasyWorship's browser, OBS or another computer (add &amp;bg=black for a flat black background)</label>
+        <div class="row">
+          <input type="text" id="relayLink" readonly>
+          <button class="btn" type="button" id="relayCopy">Copy</button>
+        </div>
+        <p id="relayMsg" role="status"></p>
+      </div>
       <div class="nav" role="group" aria-label="Move through the Bible">
         <button class="btn" id="prevCh" disabled><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 6l-6 6 6 6M19 6l-6 6 6 6"/></svg> Chapter</button>
         <button class="btn" id="prevV" disabled><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg> Verse</button>
@@ -157,7 +201,11 @@
       <div class="panel-head">
         <h2 id="h-found">Detected verses</h2>
         <form class="manual" id="manual">
-          <input type="text" id="manualRef" placeholder="Type a verse, e.g. Romans 8:28" aria-label="Verse reference">
+          <div class="ac">
+            <input type="text" id="manualRef" placeholder="Type a book, e.g. Rom, then 8:28" aria-label="Verse reference"
+                   autocomplete="off" spellcheck="false" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="sug">
+            <ul id="sug" role="listbox" hidden></ul>
+          </div>
           <button class="btn" type="submit">Show</button>
         </form>
       </div>
@@ -337,9 +385,45 @@ async function fetchVerseRaw(ref, step) {
   throw new Error("Could not load this. Upload bible.js (and the api folder) to GitHub.");
 }
 
+/* ---------- relay: lets a display in ANY browser (EasyWorship, OBS, another computer) follow this page ---------- */
+const room = (() => {
+  let r = "";
+  try { r = localStorage.getItem("vs:room") || ""; } catch (_) {}
+  if (!/^[a-z0-9]{8,40}$/.test(r)) {
+    r = Array.from(crypto.getRandomValues(new Uint8Array(10)), (b) => "abcdefghijkmnpqrstuvwxyz23456789"[b % 32]).join("");
+    try { localStorage.setItem("vs:room", r); } catch (_) {}
+  }
+  return r;
+})();
+$("relayLink").value = new URL("display.html", location.href).href + "?room=" + room;
+$("relayCopy").onclick = async () => {
+  try { await navigator.clipboard.writeText($("relayLink").value); }
+  catch (_) { $("relayLink").select(); document.execCommand("copy"); }
+  $("relayCopy").textContent = "Copied";
+  setTimeout(() => { $("relayCopy").textContent = "Copy"; }, 1500);
+};
+function relayStatus(ok, text) { $("relayMsg").textContent = text; $("relayMsg").classList.toggle("bad", !ok); }
+async function relayCall(method, payload) {
+  try {
+    const opts = method === "POST"
+      ? { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }
+      : { cache: "no-store" };
+    const r = await fetch("/api/state?room=" + room, opts);
+    if (r.ok) { relayStatus(true, "Relay connected. Displays opened with this link follow this page."); return; }
+    const d = await r.json().catch(() => null);
+    relayStatus(false, r.status === 501
+      ? "Relay is not set up yet. Connect an Upstash Redis store in Vercel and redeploy. The same-browser display still works."
+      : "Relay problem: " + ((d && d.error) || r.status));
+  } catch (_) { relayStatus(false, "Relay not reachable (no internet, or the api folder is missing)."); }
+}
+let relayChain = Promise.resolve();                       // one message at a time, so they arrive in order
+function relay(payload) { relayChain = relayChain.then(() => relayCall("POST", payload)); }
+relayCall("GET");
+
 function send(payload) {
   try { localStorage.setItem(LS, JSON.stringify(payload)); } catch (_) {}
   channel.postMessage(payload);
+  relay(payload);
 }
 function publish(verse, record = true) {
   current = verse;
@@ -425,6 +509,7 @@ function consider(ref) {
   addItem(ref, $("auto").checked);
 }
 
+let fullText = "";            // everything said in this service, for the screen, Copy and Download
 let lastFinalAt = 0;
 // Old finished text is only used for 20 seconds, so a verse from minutes ago can never pop up again after a pause.
 const windowText = () => (Date.now() - lastFinalAt < 20000 ? finalBuf.slice(-300) : "") + " " + interim;
@@ -444,7 +529,7 @@ setInterval(tick, 200);
 function renderTranscript() {
   const box = $("transcript");
   box.innerHTML = "";
-  const f = document.createElement("span"); f.textContent = finalBuf.slice(-900);
+  const f = document.createElement("span"); f.textContent = fullText.slice(-8000);
   const i = document.createElement("span"); i.className = "interim"; i.textContent = interim;
   box.append(f, i);
   box.scrollTop = box.scrollHeight;
@@ -475,13 +560,192 @@ document.addEventListener("visibilitychange", () => { if (listening && document.
 
 // Watchdog: if the engine died silently or went quiet for 90 seconds, reset it.
 setInterval(() => {
-  if (!listening) return;
+  if (!listening || engine !== "browser") return;
   const now = Date.now();
   if (!recActive && now - lastEnd > 3000) restart(0);
   else if (recActive && now - lastActivity > 90000) { lastActivity = now; try { recog.abort(); } catch (_) {} }
 }, 3000);
 
-function startListening() {
+// Words still being formed when the engine stops or restarts used to vanish. Keep them.
+function commitPending() {
+  const t = interim.trim();
+  if (t) onSpeech(t + " ", "", "");
+}
+
+/* ---------- one place that handles speech, whichever engine heard it ---------- */
+// fin = finished text, interimText = the words still being formed, utteranceText = a complete spoken phrase (or "")
+function onSpeech(fin, interimText, utteranceText) {
+  lastActivity = Date.now(); failCount = 0;
+  interim = interimText;
+  if (fin) runVoice(commandsIn(fin).slice(interimFired));
+  if (fin) interimFired = 0;
+  if (utteranceText) runFinalCommands(utteranceText);
+  const live = commandsIn(interim);
+  if (live.length > interimFired) runVoice(live.slice(interimFired));
+  interimFired = live.length;
+  if (fin) {
+    fullText += fin;
+    finalBuf = (finalBuf + fin).slice(-3000); lastFinalAt = Date.now();
+    if (!Store.addSpeech(fin)) saveFailed(); else refreshSessionBar();
+    detectReferences(windowText()).forEach(consider);   // final text is stable, so act at once
+  }
+  renderTranscript();
+}
+
+/* ---------- Deepgram engine (more accurate, punctuation, long sessions, any microphone) ---------- */
+let engine = "browser", dg = null, starting = false;
+const lsGet = (k) => { try { return localStorage.getItem(k) || ""; } catch (_) { return ""; } };
+const DG_TERMS = ["Habakkuk", "Zephaniah", "Zechariah", "Haggai", "Obadiah", "Nahum", "Philemon", "Philippians", "Colossians",
+  "Thessalonians", "Galatians", "Ephesians", "Deuteronomy", "Leviticus", "Lamentations", "Ecclesiastes", "Nehemiah", "Ezekiel",
+  "Jeremiah", "Malachi", "Hosea", "Revelation", "Song of Solomon", "Corinthians", "Hebrews", "Isaiah", "Proverbs", "Psalms", "Selah", "Amen"];
+
+async function dgToken(allowPrompt) {
+  const r = await fetch("/api/dg-token", { cache: "no-store", headers: { "x-pin": lsGet("vs:pin") } });
+  const d = await r.json().catch(() => null);
+  if (r.status === 401 && allowPrompt) {
+    const p = prompt("Enter the operator PIN:");
+    if (p) { try { localStorage.setItem("vs:pin", p.trim()); } catch (_) {} return dgToken(false); }
+  }
+  if (!r.ok || !d || !d.token) throw new Error((d && d.error) || "status " + r.status);
+  return d.token;
+}
+function audioConstraints() { const id = $("micSel").value; return id ? { deviceId: { exact: id } } : true; }
+function dgAudio() {
+  const id = $("micSel").value;
+  return { deviceId: id ? { exact: id } : undefined, echoCancellation: false, noiseSuppression: true, autoGainControl: true };
+}
+function dgUrl(useTerms) {
+  const p = new URLSearchParams({ model: "nova-3", language: "en", punctuate: "true", smart_format: "true",
+    interim_results: "true", endpointing: "500" });
+  if (useTerms) DG_TERMS.forEach((t) => p.append("keyterm", t));
+  return "wss://api.deepgram.com/v1/listen?" + p;
+}
+
+async function startDeepgram() {                         // returns true when handled, or a reason text if Deepgram is not usable
+  let token;
+  try { token = await dgToken(true); } catch (e) { return e.message; }
+  let s;
+  try { s = await navigator.mediaDevices.getUserMedia({ audio: dgAudio() }); }
+  catch (_) { setMic("off", "Microphone blocked or not found."); return true; }
+  dg = { stream: s, ws: null, rec: null, tries: 0, terms: true, seg: "" };
+  engine = "deepgram"; listening = true; lastActivity = Date.now(); keepAwake(true);
+  Store.ensureActive(); refreshSessionBar(); loadMics();
+  $("mic").textContent = "Stop listening"; $("mic").className = "btn live big";
+  setMic("live", "Connecting…");
+  $("engineNote").className = ""; $("engineNote").textContent = "Deepgram engine on.";
+  startMeter(s);
+  dgConnect(token);
+  return true;
+}
+
+function dgConnect(token) {
+  if (!dg || !listening) return;
+  const ws = new WebSocket(dgUrl(dg.terms), ["bearer", token]);
+  dg.ws = ws;
+  let opened = false;
+  ws.onopen = () => {
+    opened = true; dg.tries = 0;
+    setMic("live", "Listening");
+    const type = "audio/webm;codecs=opus";
+    const rec = new MediaRecorder(dg.stream, MediaRecorder.isTypeSupported(type) ? { mimeType: type } : undefined);
+    rec.ondataavailable = (e) => { if (e.data.size && ws.readyState === 1) ws.send(e.data); };
+    rec.start(250);                                      // a new recorder per connection, so the audio header is sent first
+    dg.rec = rec;
+  };
+  ws.onmessage = (ev) => {
+    let m; try { m = JSON.parse(ev.data); } catch (_) { return; }
+    if (m.type !== "Results" || !dg) return;
+    const alt = (m.channel && m.channel.alternatives && m.channel.alternatives[0]) || {};
+    const t = alt.transcript || "";
+    if (m.is_final) {
+      if (t) dg.seg += t + " ";
+      const phrase = m.speech_final ? dg.seg : "";       // a pause in speaking: the phrase is complete
+      if (m.speech_final) dg.seg = "";
+      onSpeech(t ? t + " " : "", "", phrase);
+    } else {
+      onSpeech("", t, "");
+    }
+  };
+  ws.onerror = () => {};                                 // onclose follows
+  ws.onclose = () => {
+    if (dg && dg.ws === ws) commitPending();
+    try { if (dg && dg.rec && dg.rec.state !== "inactive") dg.rec.stop(); } catch (_) {}
+    if (!dg || !listening || dg.ws !== ws) return;
+    if (!opened && dg.terms) dg.terms = false;           // maybe the key terms were refused: try once without them
+    setMic("live", "Reconnecting…");
+    dgReconnect();
+  };
+}
+function dgReconnect() {
+  const d = dg;
+  if (!d || !listening) return;
+  d.tries++;
+  if (d.tries > 6) { fallbackToBrowser("Deepgram keeps disconnecting."); return; }
+  setTimeout(async () => {
+    if (dg !== d || !listening) return;
+    try { dgConnect(await dgToken(false)); } catch (_) { dgReconnect(); }
+  }, Math.min(400 * 2 ** d.tries, 8000));
+}
+function stopDeepgram() {
+  const d = dg; dg = null;
+  if (!d) return;
+  try { if (d.rec && d.rec.state !== "inactive") d.rec.stop(); } catch (_) {}
+  try { if (d.ws) { if (d.ws.readyState === 1) d.ws.send(JSON.stringify({ type: "CloseStream" })); d.ws.close(); } } catch (_) {}
+}
+function fallbackToBrowser(why) {
+  stopDeepgram(); stopMeter(); listening = false;
+  $("engineNote").className = "bad";
+  $("engineNote").textContent = why + " Switched to the free browser engine.";
+  startBrowserListening();
+}
+
+async function startListening() {
+  if (starting) return;
+  starting = true;
+  try {
+    if ($("engine").value === "deepgram") {
+      const r = await startDeepgram();
+      if (r === true) return;
+      $("engineNote").className = "bad";
+      $("engineNote").textContent = "Deepgram is not available (" + r + "). Using the free browser engine instead.";
+    } else { $("engineNote").className = ""; $("engineNote").textContent = ""; }
+    startBrowserListening();
+  } finally { starting = false; }
+}
+
+/* ---------- microphone list, engine choice, transcript buttons ---------- */
+async function loadMics() {
+  try {
+    const devs = (await navigator.mediaDevices.enumerateDevices())
+      .filter((d) => d.kind === "audioinput" && d.deviceId !== "default" && d.deviceId !== "communications");
+    const sel = $("micSel"), keep = sel.value || lsGet("vs:mic");
+    sel.replaceChildren(new Option("Default microphone", ""), ...devs.map((d, i) => new Option(d.label || "Microphone " + (i + 1), d.deviceId)));
+    sel.value = [...sel.options].some((o) => o.value === keep) ? keep : "";
+  } catch (_) {}
+}
+function initListeningUI() {
+  const e = lsGet("vs:engine");
+  if (e && [...$("engine").options].some((o) => o.value === e)) $("engine").value = e;
+  loadMics();
+  if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) navigator.mediaDevices.addEventListener("devicechange", loadMics);
+  const again = () => { if (listening) { stopListening(); setTimeout(startListening, 400); } };
+  $("engine").onchange = () => { try { localStorage.setItem("vs:engine", $("engine").value); } catch (_) {} again(); };
+  $("micSel").onchange = () => { try { localStorage.setItem("vs:mic", $("micSel").value); } catch (_) {} again(); };
+  $("tCopy").onclick = async () => {
+    try { await navigator.clipboard.writeText(fullText.trim()); $("tCopy").textContent = "Copied"; }
+    catch (_) { $("tCopy").textContent = "Could not copy"; }
+    setTimeout(() => { $("tCopy").textContent = "Copy everything"; }, 1500);
+  };
+  $("tSave").onclick = () => {
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([fullText.trim() + "\n"], { type: "text/plain" }));
+    a.download = "transcript-" + new Date().toISOString().slice(0, 16).replace(/[:T]/g, "-") + ".txt";
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  };
+}
+
+function startBrowserListening() {
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!SR) { setMic("off", "Use Chrome or Edge"); return; }
   recog = new SR();
@@ -490,25 +754,12 @@ function startListening() {
   recog.lang = $("lang").value;
   recog.onstart = () => { recActive = true; lastActivity = Date.now(); setMic("live", "Listening"); };
   recog.onresult = (e) => {
-    lastActivity = Date.now(); failCount = 0;
-    let fin = "";
-    interim = "";
+    let fin = "", partial = "";
     for (let i = e.resultIndex; i < e.results.length; i++) {
       const t = e.results[i][0].transcript;
-      if (e.results[i].isFinal) fin += t + " "; else interim += t;
+      if (e.results[i].isFinal) fin += t + " "; else partial += t;
     }
-    if (fin) runVoice(commandsIn(fin).slice(interimFired));
-    if (fin) interimFired = 0;
-    if (fin) runFinalCommands(fin);
-    const live = commandsIn(interim);
-    if (live.length > interimFired) runVoice(live.slice(interimFired));
-    interimFired = live.length;
-    if (fin) {
-      finalBuf = (finalBuf + fin).slice(-3000); lastFinalAt = Date.now();
-      if (!Store.addSpeech(fin)) saveFailed(); else refreshSessionBar();
-      detectReferences(windowText()).forEach(consider);   // final text is stable, so act at once
-    }
-    renderTranscript();
+    onSpeech(fin, partial, fin);
   };
   recog.onerror = (e) => {
     if (e.error === "no-speech" || e.error === "aborted") return;
@@ -521,10 +772,11 @@ function startListening() {
     setMic("live", e.error === "network" ? "Reconnecting…" : "Retrying…");          // onend restarts it
   };
   recog.onend = () => {                  // the browser stops after silence, so start again (slower if it keeps failing)
+    commitPending();
     recActive = false; lastEnd = Date.now();
     if (listening) restart(Math.min(300 * 2 ** failCount, 5000));
   };
-  listening = true; lastEnd = Date.now(); lastActivity = Date.now(); failCount = 0; keepAwake(true);
+  engine = "browser"; listening = true; lastEnd = Date.now(); lastActivity = Date.now(); failCount = 0; keepAwake(true);
   Store.ensureActive(); refreshSessionBar();
   try { recog.start(); } catch (_) {}
   $("mic").textContent = "Stop listening"; $("mic").className = "btn live big";
@@ -533,7 +785,9 @@ function startListening() {
 }
 
 function stopListening() {
+  commitPending();
   listening = false;
+  stopDeepgram();
   keepAwake(false);
   clearTimeout(restartTimer);
   try { recog && recog.stop(); } catch (_) {}
@@ -566,9 +820,9 @@ function drawMeter() {
   });
 }
 
-async function startMeter() {
+async function startMeter(shared) {
   try {
-    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    stream = shared || await navigator.mediaDevices.getUserMedia({ audio: audioConstraints() });
     audioCtx = new (window.AudioContext || window.webkitAudioContext)();
     analyser = audioCtx.createAnalyser();
     analyser.fftSize = 1024;
@@ -599,11 +853,92 @@ addEventListener("resize", drawMeter);
 $("manual").onsubmit = (e) => {
   e.preventDefault();
   const found = detectReferences($("manualRef").value);
-  if (!found.length) { setMsg("Could not read that reference. Try something like John 3:16."); return; }
+  if (!found.length) { setMsg("Could not read that. Pick a book from the list, then add the chapter and verse, like John 3:16."); return; }
   setMsg("");
   found.forEach((r) => { seen.set(lower(r), Date.now()); addItem(r, true); });
   $("manualRef").value = "";
+  hideSug();
 };
+
+/* ---------- book suggestions while typing ---------- */
+// Type "l" and see Leviticus, Lamentations, Luke. Pick one, then type the numbers (3:16 or 3 16) and press Enter.
+// Also forgives spelling slips: "galations", "filipians", "ezekial" still find the right book.
+const BOOK_INDEX = BOOKS.map(([canon, ...extra]) => ({ canon, names: [canon.toLowerCase(), ...extra.map((s) => s.toLowerCase())] }));
+
+function lev(a, b) {                                      // how many letters differ between two words
+  const d = Array.from({ length: a.length + 1 }, (_, i) => [i]);
+  for (let j = 1; j <= b.length; j++) d[0][j] = j;
+  for (let i = 1; i <= a.length; i++)
+    for (let j = 1; j <= b.length; j++)
+      d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+  return d[a.length][b.length];
+}
+
+function suggestBooks(raw) {
+  let q = raw.toLowerCase().replace(/^\s+/, "")
+    .replace(/^(first|1st)\b\s*/, "1 ").replace(/^(second|2nd)\b\s*/, "2 ").replace(/^(third|3rd)\b\s*/, "3 ")
+    .replace(/^([123])(?=[a-z])/, "$1 ");
+  if (!/^(?:[123] ?)?[a-z' ]*$/.test(q)) return null;      // numbers after the book name: stop suggesting
+  const full = q.replace(/\s+$/, "");
+  const done = q !== full && BOOK_INDEX.some((b) => b.names.includes(full));
+  if (done || !full) return null;                         // a whole book name followed by a space: time for the numbers
+  const m = /^([123]) ?(.*)$/.exec(full);
+  const num = m ? m[1] : null, rest = m ? m[2] : full;
+  const tiers = [[], [], []];                             // 0 starts with it, 1 contains it, 2 close spelling
+  for (const b of BOOK_INDEX) {
+    let best = 9;
+    for (const name of b.names) {
+      const nm = /^([123]) (.+)$/.exec(name);
+      if (num && (!nm || nm[1] !== num)) continue;
+      const bare = nm ? nm[2] : name;
+      if (bare.startsWith(rest)) best = Math.min(best, 0);
+      else if (rest.length >= 2 && bare.includes(rest)) best = Math.min(best, 1);
+      else if (rest.length >= 3 && lev(rest, bare.slice(0, rest.length + 1)) <= (rest.length >= 5 ? 2 : 1)) best = Math.min(best, 2);
+    }
+    if (best < 9) tiers[best].push(b.canon);
+  }
+  return tiers.find((t) => t.length) || [];
+}
+
+const sug = $("sug"), mref = $("manualRef");
+let sugList = [], sugOn = -1;
+function hideSug() { sug.hidden = true; sugList = []; sugOn = -1; mref.setAttribute("aria-expanded", "false"); }
+function paintSug() {
+  sug.replaceChildren(...sugList.map((b, i) => {
+    const li = document.createElement("li");
+    li.setAttribute("role", "option");
+    li.className = i === sugOn ? "on" : "";
+    li.append(b);
+    const s = document.createElement("small");
+    s.textContent = CHAPTERS[b] + (CHAPTERS[b] === 1 ? " chapter" : " chapters");
+    li.append(s);
+    li.onmousedown = (e) => { e.preventDefault(); pickBook(b); };   // mousedown, so the box does not lose focus first
+    return li;
+  }));
+  sug.hidden = !sugList.length;
+  mref.setAttribute("aria-expanded", String(!!sugList.length));
+  const on = sug.children[sugOn];
+  if (on) on.scrollIntoView({ block: "nearest" });
+}
+function pickBook(b) {
+  mref.value = b + " ";
+  hideSug();
+  mref.focus();
+  setMsg(`${b}: now type the chapter and verse, for example 3:16 or 3 16, then press Enter.`);
+}
+mref.addEventListener("input", () => {
+  sugList = suggestBooks(mref.value) || [];
+  sugOn = sugList.length ? 0 : -1;
+  paintSug();
+});
+mref.addEventListener("keydown", (e) => {
+  if (sug.hidden) return;
+  if (e.key === "ArrowDown") { e.preventDefault(); sugOn = (sugOn + 1) % sugList.length; paintSug(); }
+  else if (e.key === "ArrowUp") { e.preventDefault(); sugOn = (sugOn - 1 + sugList.length) % sugList.length; paintSug(); }
+  else if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); pickBook(sugList[Math.max(sugOn, 0)]); }
+  else if (e.key === "Escape") { e.preventDefault(); hideSug(); }
+});
+mref.addEventListener("blur", () => setTimeout(hideSug, 120));
 
 /* ---------- keyboard ---------- */
 addEventListener("keydown", (e) => {
@@ -717,7 +1052,7 @@ $("newSvc").onclick = () => {
   const m = id && Store.list().find((x) => x.id === id);
   if (m && (m.words || m.verses) && !confirm("Start a new service? The notes so far stay saved.")) return;
   Store.endActive();
-  finalBuf = ""; interim = ""; renderTranscript();
+  finalBuf = ""; fullText = ""; interim = ""; renderTranscript();
   if (listening) Store.create();
   refreshSessionBar();
 };
@@ -729,6 +1064,7 @@ addEventListener("storage", (e) => { if (e.key === Store.IDX || e.key === Store.
 
 loadTranslations();
 refreshSessionBar();
+initListeningUI();
 </script>
 </body>
 </html>
