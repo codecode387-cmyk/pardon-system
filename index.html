@@ -70,6 +70,8 @@
   .keybox input { flex:1; min-width:200px; }
   .manual { display:flex; gap:8px; }
   .manual input { width:230px; }
+  #searchForm { margin-bottom:10px; }
+  #searchForm input { flex:1; width:auto; min-width:0; }
   #msg { min-height:20px; margin:0 0 10px; color:var(--mute); font-size:14px; }
   .item { display:flex; gap:14px; align-items:flex-start; justify-content:space-between; padding:14px; margin-bottom:10px; background:var(--panel-2); border:1px solid var(--line); border-radius:10px; }
   .item.onscreen { border-color:var(--ok); }
@@ -209,6 +211,10 @@
           <button class="btn" type="submit">Show</button>
         </form>
       </div>
+      <form class="manual" id="searchForm">
+        <input type="text" id="searchQ" placeholder='Search by words, e.g. "where Jesus wept"' aria-label="Search the Bible by words or description" autocomplete="off">
+        <button class="btn" type="submit" id="searchBtn">Search</button>
+      </form>
       <p id="msg" role="status"></p>
       <div id="list"><p class="empty">Verses appear here as they are spoken.</p></div>
       <p class="keys">Enter shows the newest verse. Esc clears the screen. The left and right arrow keys move one verse; hold Shift to move one chapter. Say "next", "go back", "go down to 15" or "go to John 3:16" to do the same by voice. Say "give me KJV version" or "switch to NIV" to change translation.</p>
@@ -939,6 +945,38 @@ mref.addEventListener("keydown", (e) => {
   else if (e.key === "Escape") { e.preventDefault(); hideSug(); }
 });
 mref.addEventListener("blur", () => setTimeout(hideSug, 120));
+
+/* ---------- search by words or description ---------- */
+// Calls /api/search. Results go into the Detected verses list; nothing reaches the screen until you press Show.
+async function searchBible(q, allowPrompt = true) {
+  const r = await fetch("/api/search?q=" + encodeURIComponent(q) + "&t=" + encodeURIComponent($("tr").value),
+    { cache: "no-store", headers: { "x-pin": lsGet("vs:pin") } });
+  const d = await r.json().catch(() => null);
+  if (r.status === 401 && allowPrompt) {
+    const p = prompt("Enter the operator PIN:");
+    if (p) { try { localStorage.setItem("vs:pin", p.trim()); } catch (_) {} return searchBible(q, false); }
+  }
+  if (!r.ok || !d) throw new Error((d && d.error) || "Search failed (" + r.status + ")");
+  return d.refs || [];
+}
+
+$("searchForm").onsubmit = async (e) => {
+  e.preventDefault();
+  const q = $("searchQ").value.trim();
+  if (q.length < 3) { setMsg("Type a few more words."); return; }
+  $("searchBtn").disabled = true;
+  setMsg("Searching…");
+  try {
+    const refs = await searchBible(q);
+    if (!refs.length) { setMsg("Nothing found. Try different words."); return; }
+    setMsg("Found " + refs.length + ". Press Show on the one you want.");
+    refs.slice().reverse().forEach((ref) => {          // reversed so the best match ends up on top
+      const found = detectReferences(ref);
+      (found.length ? found : [ref]).forEach((r) => { seen.set(lower(r), Date.now()); addItem(r, false); });
+    });
+  } catch (err) { setMsg(err.message); }
+  finally { $("searchBtn").disabled = false; }
+};
 
 /* ---------- keyboard ---------- */
 addEventListener("keydown", (e) => {
