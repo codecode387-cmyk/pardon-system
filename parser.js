@@ -183,6 +183,7 @@ function relativeRef(current, cmd) {
 
 /* ---------- spoken translation switch ---------- */
 // "give me KJV version", "switch to NIV", "use the new living translation", or just "NIV"
+// "give me TPT", "switch to the passion translation" (YouVersion)
 const TR_NAMES = [
   ["nkjv", "new\\s+king\\s+james(?:\\s+version)?|n\\s*k\\s*j\\s*v"],
   ["kjv",  "king\\s+james(?:\\s+version)?|k\\s*j\\s*v"],
@@ -192,6 +193,7 @@ const TR_NAMES = [
   ["nasb", "new\\s+american\\s+standard(?:\\s+bible)?|n\\s*a\\s*s\\s*b"],
   ["amp",  "amplified(?:\\s+bible)?|amp\\s+(?:version|translation|bible)"],
   ["web",  "world\\s+english(?:\\s+bible)?|web\\s+(?:version|translation|bible)"],
+  ["tpt",  "passion\\s+translation|passion|t\\s*p\\s*t|tea\\s*p\\s*t"],
 ];
 const TR_TRIGGER = "(?:give\\s+(?:me|us)|switch(?:\\s+over)?\\s+to|change(?:\\s+over)?\\s+to|use|show\\s+(?:me|us)|put\\s+it\\s+in|read\\s+(?:it\\s+)?in|let'?s\\s+use|go\\s+to|move\\s+to|i\\s+want|bring\\s+up)";
 const TR_TAIL = "(?:\\s+(?:version|translation|bible))?(?:\\s+(?:please|now))?";
