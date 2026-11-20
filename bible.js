@@ -1,6 +1,6 @@
 // Looks up Bible text straight from the browser, so the app still works when the /api folder is missing.
-// It talks to bible-api.com (free translations) and to API.Bible (NIV, NLT and others) using a key
-// that you paste into the page. The key is kept only in this browser, never in GitHub.
+// It talks to bible-api.com (free translations), to API.Bible (NIV, NLT and others) and to YouVersion,
+// using keys that you paste into the page. The keys are kept only in this browser, never in GitHub.
 (function (root) {
   const CODES = {
     "Genesis":"GEN","Exodus":"EXO","Leviticus":"LEV","Numbers":"NUM","Deuteronomy":"DEU","Joshua":"JOS","Judges":"JDG","Ruth":"RUT",
@@ -90,6 +90,7 @@
   }
 
   const clean = (t) => String(t || "").replace(/¶/g, "").replace(/\s*\n+\s*/g, " ").replace(/\s{2,}/g, " ").trim();
+  const stripTags = (t) => String(t || "").replace(/<[^>]+>/g, " ");
   function clip(text, max = 1000) {
     if (text.length <= max) return { text, truncated: false };
     const cut = text.slice(0, max);
@@ -120,12 +121,67 @@
     return { reference: clean(d.reference), text: clean(d.content), copyright: clean(d.copyright) };
   }
 
+  /* ---------- YouVersion Platform API ---------- */
+  const YV = "https://api.youversion.com/v1";
+  const yvHeaders = (key) => ({ "X-YVP-App-Key": key, "Accept": "application/json" });
+  const yvCopy = new Map();                                 // Bible id -> copyright notice
+
+  async function fromYouVersion(bibleId, p, key) {
+    if (!key) throw new Fail(501, "This translation needs your YouVersion key. Paste it under “Not seeing NIV…” on this page.");
+    if (!/^\d{1,8}$/.test(bibleId)) throw new Fail(400, "Bad Bible id");
+    let r;
+    try { r = await fetch(`${YV}/bibles/${bibleId}/passages/${usfm(p)}?format=text`, { headers: yvHeaders(key) }); }
+    catch (_) { throw new Fail(502, "Could not reach YouVersion. Check the internet connection."); }
+    if (r.status === 401 || r.status === 403) throw new Fail(403, "YouVersion did not accept the key for this translation. Check the key, and that this Bible is enabled for your app.");
+    if (!r.ok) throw new Fail(404, "Verse not found in this translation");
+    const d = await r.json();
+    if (!yvCopy.has(bibleId)) {                              // the verse reply has no copyright line, so read it once from the Bible's details
+      let c = "";
+      try {
+        const m = await fetch(`${YV}/bibles/${bibleId}`, { headers: yvHeaders(key) });
+        if (m.ok) c = clean((await m.json()).copyright);
+      } catch (_) {}
+      yvCopy.set(bibleId, c);
+    }
+    return { reference: clean(d.reference), text: clean(stripTags(d.content)), copyright: yvCopy.get(bibleId) };
+  }
+
+  async function listYouVersion(key, langs) {
+    const out = [], seen = new Set();
+    let token = null;
+    for (let page = 0; page < 5; page++) {
+      const qs = new URLSearchParams();
+      langs.forEach((l) => qs.append("language_ranges[]", l));
+      if (token) qs.set("page_token", token);
+      let r;
+      try { r = await fetch(`${YV}/bibles?${qs}`, { headers: yvHeaders(key) }); }
+      catch (_) { throw new Error("Your browser could not reach YouVersion. Check the internet connection."); }
+      if (r.status === 401 || r.status === 403) throw new Error("YouVersion rejected the key (status " + r.status + "). Check that it was copied completely.");
+      if (!r.ok) throw new Error("YouVersion returned status " + r.status + " when listing Bibles.");
+      const d = await r.json();
+      const arr = Array.isArray(d) ? d : (d.data || []);
+      let added = 0;
+      for (const b of arr) {
+        const id = String(b.id);
+        if (seen.has(id)) continue;
+        seen.add(id); added++;
+        const abbr = b.abbreviation || b.localized_title || b.title || id;
+        yvCopy.set(id, clean(b.copyright));
+        out.push({ id: "yv:" + id, abbr, name: b.localized_title || b.title || abbr, group: "YouVersion" });
+      }
+      token = d && d.next_page_token;
+      if (!token || !added) break;
+    }
+    return out.sort((a, b) => rank(a.abbr) - rank(b.abbr) || a.name.localeCompare(b.name));
+  }
+
   const load = (t, p, keys) =>
     t.startsWith("bible:") ? fromApiBible(t.slice(6), p, keys.bibleKey) :
+    t.startsWith("yv:") ? fromYouVersion(t.slice(3), p, keys.yvKey) :
     t === "esv" ? Promise.reject(new Fail(501, "ESV needs the server setup. Pick another translation.")) :
     fromFree(t.replace(/^free:/, ""), p);
 
-  // q = { ref, t, nav, unit }   keys = { bibleKey }
+  // q = { ref, t, nav, unit }   keys = { bibleKey, yvKey }
   async function lookup(q, keys) {
     keys = keys || {};
     const t = String(q.t || "free:kjv");
@@ -150,7 +206,7 @@
     return { ref: fmt(p), reference: out.reference || fmt(p), text, truncated, copyright: out.copyright };
   }
 
-  // keys = { bibleKey, langs }
+  // keys = { bibleKey, yvKey, langs }
   async function listTranslations(keys) {
     keys = keys || {};
     const list = [
@@ -159,10 +215,10 @@
       { id: "free:bbe", abbr: "BBE", name: "Bible in Basic English", group: "Free" },
       { id: "free:oeb-us", abbr: "OEB", name: "Open English Bible", group: "Free" },
     ];
-    const info = { bible: !!keys.bibleKey, esv: false, warnings: [] };
+    const info = { bible: !!keys.bibleKey, esv: false, warnings: [], yvFound: [], yvWarnings: [] };
+    const langs = (keys.langs || "eng").split(",").map((s) => s.trim());
     if (keys.bibleKey) {
       try {
-        const langs = (keys.langs || "eng").split(",").map((s) => s.trim());
         let r;
         try { r = await fetch("https://rest.api.bible/v1/bibles", { headers: { "api-key": keys.bibleKey } }); }
         catch (_) { throw new Error("Your browser could not reach API.Bible. Check the internet connection, and the key's allowed domains in the API.Bible dashboard."); }
@@ -180,6 +236,14 @@
         if (!found.length) info.warnings.push(info.total ? `Your key works and returned ${info.total} Bibles, but none in English.` : "Your key works, but no Bibles are enabled for it yet. In your API.Bible dashboard, open your app and select the Bibles you want.");
         else if (missing.length) info.hint = `Your API.Bible key works (${found.length} Bibles found), but ${missing.join(", ")} ${missing.length > 1 ? "are" : "is"} not enabled for it yet. In your API.Bible dashboard, open your app and check its selected Bibles. Some need approval from the publisher first.`;
       } catch (e) { info.warnings.push(e.message); }
+    }
+    if (keys.yvKey) {
+      try {
+        const found = await listYouVersion(keys.yvKey, langs);
+        list.push(...found);
+        info.yvFound = found.map((b) => b.abbr);
+        if (!found.length) info.yvWarnings.push("Your YouVersion key works, but no English Bibles are enabled for it yet. Check your app on platform.youversion.com.");
+      } catch (e) { info.yvWarnings.push(e.message); }
     }
     return { translations: list, ...info };
   }
