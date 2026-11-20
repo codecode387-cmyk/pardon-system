@@ -68,6 +68,7 @@
   details.help p { margin:8px 0 0; }
   .keybox { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-top:12px; padding-top:12px; border-top:1px solid var(--line); }
   .keybox input { flex:1; min-width:200px; }
+  .keylabel { flex-basis:100%; font-size:13px; color:var(--ink); font-weight:500; }
   .manual { display:flex; gap:8px; }
   .manual input { width:230px; }
   #searchForm { margin-bottom:10px; }
@@ -190,11 +191,18 @@
         <label class="grow"><input type="checkbox" id="voice" checked> Voice commands: "next", "go back", "go down to 15", "go to John 3:16", "give me NIV"</label>
         <details class="help"><summary>Not seeing NIV, NLT or other translations?</summary><div id="trStatus"><p>Checking…</p></div>
           <div class="keybox">
+            <div class="keylabel">API.Bible key</div>
             <input type="password" id="bkey" placeholder="Paste your API.Bible key" autocomplete="off" aria-label="API.Bible key">
             <button class="btn primary" type="button" id="bkeySave">Save key</button>
             <button class="btn ghost" type="button" id="bkeyClear">Remove key</button>
           </div>
-          <p>The key is saved only in this browser on this computer. It is not stored on GitHub or on the server.</p>
+          <div class="keybox">
+            <div class="keylabel">YouVersion key</div>
+            <input type="password" id="ykey" placeholder="Paste your YouVersion key" autocomplete="off" aria-label="YouVersion key">
+            <button class="btn primary" type="button" id="ykeySave">Save key</button>
+            <button class="btn ghost" type="button" id="ykeyClear">Remove key</button>
+          </div>
+          <p>The keys are saved only in this browser on this computer. A YouVersion key is already built in; paste a different one to replace it.</p>
         </details>
       </div>
     </section>
@@ -236,6 +244,17 @@
 <script>
 const $ = (id) => document.getElementById(id);
 function localKey() { try { return localStorage.getItem("vs:bkey") || ""; } catch (_) { return ""; } }
+
+// YouVersion key. This one is built in so it works straight away. Pasting a different key in the box replaces it,
+// and "Remove key" turns YouVersion off on this computer.
+const DEFAULT_YV_KEY = "AGwAGwtmvTA69hFq6p9Fdhg8P7l8PeezHbWhylXEDsY7UcNA";
+function yvKey() {
+  let s = "";
+  try { s = localStorage.getItem("vs:ykey") || ""; } catch (_) {}
+  if (s === "off") return "";
+  return s || DEFAULT_YV_KEY;
+}
+
 const LS = "vs:current";
 const channel = new BroadcastChannel("verse-screen");
 try { localStorage.removeItem(LS); } catch (_) {}   // start every session with a blank screen
@@ -269,6 +288,23 @@ scalePreview();
 
 /* ---------- translations ---------- */
 let translationInfo = {};
+
+// Adds the YouVersion Bibles to whatever list we already have (free, API.Bible, ESV stay as they are).
+async function addYouVersion(data) {
+  const k = yvKey();
+  if (!k || typeof BibleCore === "undefined") return;
+  try {
+    const y = await BibleCore.listTranslations({ yvKey: k, langs: "en" });
+    const found = y.translations.filter((t) => t.group === "YouVersion");
+    data.translations = data.translations.concat(found);
+    data.yvFound = y.yvFound || [];
+    data.yvWarnings = y.yvWarnings || [];
+  } catch (e) {
+    data.yvFound = [];
+    data.yvWarnings = [e.message || "Could not load the YouVersion list."];
+  }
+}
+
 async function loadTranslations() {
   let data, err = "";
   try {
@@ -286,9 +322,11 @@ async function loadTranslations() {
     data = await BibleCore.listTranslations({ bibleKey: localKey() });
     via = "browser";
   }
+  await addYouVersion(data);
   translationInfo = data;
   diagnose(data, err, via);
   const sel = $("tr");
+  sel.replaceChildren();
   const groups = {};
   for (const t of data.translations) (groups[t.group] = groups[t.group] || []).push(t);
   for (const g of Object.keys(groups).sort((a, b) => (a === "Free" ? -1 : 0) - (b === "Free" ? -1 : 0))) {
@@ -306,9 +344,11 @@ async function loadTranslations() {
   sel.value = saved && [...sel.options].some((o) => o.value === saved) ? saved : "free:kjv";
 
   const warn = (data.warnings || [])[0];
+  const yvWarn = (data.yvWarnings || [])[0];
   let dismissed = false;
   try { dismissed = localStorage.getItem("vs:notice") === "1"; } catch (_) {}
   if (warn && (via === "browser" || data.bible)) showNotice(warn);       // only speak up when a key you added has a problem
+  else if (yvWarn) showNotice("YouVersion: " + yvWarn);
   else if (!dismissed && data.hint) showNotice(data.hint);
 }
 function diagnose(data, err, via) {
@@ -324,6 +364,12 @@ function diagnose(data, err, via) {
       if (data.hint) lines.push(data.hint);
     }
   }
+  if (!yvKey()) lines.push("YouVersion is off. Paste a YouVersion key below and click Save key to turn it on.");
+  else if (data.yvWarnings && data.yvWarnings.length) lines.push("YouVersion problem: " + data.yvWarnings[0]);
+  else {
+    const y = data.yvFound || [];
+    lines.push(`YouVersion gave this key ${y.length} Bible${y.length === 1 ? "" : "s"}: ${y.slice(0, 40).join(", ") || "none"}.`);
+  }
   $("trStatus").replaceChildren(...lines.map((l) => { const p = document.createElement("p"); p.textContent = l; return p; }));
 }
 $("bkeySave").onclick = () => {
@@ -334,6 +380,16 @@ $("bkeySave").onclick = () => {
 };
 $("bkeyClear").onclick = () => { try { localStorage.removeItem("vs:bkey"); } catch (_) {} location.reload(); };
 if (localKey()) $("bkey").placeholder = "A key is saved in this browser. Paste a new one to replace it.";
+
+$("ykeySave").onclick = () => {
+  const k = $("ykey").value.trim();
+  if (!k) return;
+  try { localStorage.setItem("vs:ykey", k); } catch (_) {}
+  location.reload();
+};
+$("ykeyClear").onclick = () => { try { localStorage.setItem("vs:ykey", "off"); } catch (_) {} location.reload(); };
+$("ykey").placeholder = yvKey() ? "A YouVersion key is in use. Paste a new one to replace it." : "Paste your YouVersion key";
+
 function showNotice(t) { $("noticeTxt").textContent = t; $("notice").hidden = false; }
 $("noticeX").onclick = () => { $("notice").hidden = true; try { localStorage.setItem("vs:notice", "1"); } catch (_) {} };
 
@@ -368,7 +424,8 @@ async function fetchVerseRaw(ref, step) {
   const t = $("tr").value;
   const done = (d) => ({ ref: d.ref || ref, reference: d.reference, text: d.text, translation: trLabel(), copyright: d.copyright || "" });
   const hasCore = typeof BibleCore !== "undefined";
-  const direct = () => BibleCore.lookup({ ref, t, nav: step && step.nav, unit: step && step.unit }, { bibleKey: localKey() }).then(done);
+  const direct = () => BibleCore.lookup({ ref, t, nav: step && step.nav, unit: step && step.unit }, { bibleKey: localKey(), yvKey: yvKey() }).then(done);
+  if (hasCore && t.startsWith("yv:")) return direct();                     // YouVersion goes straight from this browser
   if (hasCore && localKey() && t.startsWith("bible:")) return direct();   // key saved in this browser
   try {                                                                    // 1st choice: your own /api function
     const nav = step ? `&nav=${step.nav}&unit=${step.unit}` : "";
@@ -1042,7 +1099,7 @@ function switchTranslation(abbr) {
   const opts = [...$("tr").options];
   const opt = opts.find((o) => (o.dataset.abbr || "").toLowerCase() === abbr)
            || opts.find((o) => (o.dataset.abbr || "").toLowerCase().startsWith(abbr));
-  if (!opt) { showNav(abbr.toUpperCase() + " is not available. Add your API.Bible key under 'Not seeing NIV, NLT…'.", true); return; }
+  if (!opt) { showNav(abbr.toUpperCase() + " is not available. Add your API.Bible or YouVersion key under 'Not seeing NIV, NLT…'.", true); return; }
   if ($("tr").value === opt.value) { showNav("Already on " + opt.dataset.abbr); return; }
   $("tr").value = opt.value;
   $("tr").onchange();                    // reloads the list and the verse on screen in the new translation
