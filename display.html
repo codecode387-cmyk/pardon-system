@@ -10,7 +10,7 @@
 <style>
   :root { --text:#f4f2ed; --ref:#a9c0ff; --mute:#8d97b5; }
   * { box-sizing:border-box; }
-  html, body { height:100%; margin:0; }
+  html, body { width:100%; height:100%; margin:0; }
   html { background:#000; }
   body {
     display:flex; align-items:center; justify-content:center; overflow:hidden; color:var(--text);
@@ -25,30 +25,32 @@
   /* ?bg=black : plain black background instead of the blue gradient (clean for EasyWorship / OBS capture) */
   body.bgblack { background:#000; }
 
-  .stage { width:min(1500px, 86vw); opacity:0; transition:opacity .25s ease; }
+  /* Everything is centered: the stage sits in the middle of the screen and its text is centered inside it. */
+  .stage { width:min(1500px, 88vw); margin:0 auto; text-align:center; opacity:0; transition:opacity .25s ease; }
   .stage.show { opacity:1; }
 
-  #ref { display:flex; align-items:center; gap:18px; margin:0 0 .55em; color:var(--ref);
-         font-size:clamp(22px, 4.2vh, 48px); font-weight:600; letter-spacing:.005em; }
-  #ref::before { content:""; width:56px; height:3px; border-radius:2px; background:var(--ref); flex:none; }
-  #text { margin:0; font-weight:500; line-height:1.32; text-wrap:pretty; }
-  .meta { display:flex; flex-wrap:wrap; align-items:baseline; gap:6px 18px; margin-top:1.3em;
-          font-family:Inter, system-ui, sans-serif; }
+  #ref { display:flex; align-items:center; justify-content:center; gap:18px; margin:0 0 .55em; color:var(--ref);
+         font-size:clamp(22px, 4.2vh, 48px); font-weight:600; letter-spacing:.005em; text-align:center; }
+  #ref::before, #ref::after { content:""; width:56px; height:3px; border-radius:2px; background:var(--ref); flex:none; }
+  #text { margin:0 auto; font-weight:500; line-height:1.32; text-wrap:balance; text-align:center; }
+  .meta { display:flex; flex-wrap:wrap; align-items:baseline; justify-content:center; gap:6px 18px; margin-top:1.3em;
+          font-family:Inter, system-ui, sans-serif; text-align:center; }
   #tr { color:var(--ref); font-weight:600; font-size:clamp(14px, 2.2vh, 24px); }
   #copy { color:var(--mute); font-weight:500; font-size:clamp(10px, 1.4vh, 15px); max-width:70ch; }
 
-  /* Lower third: sits at the bottom of the picture.
+  /* Lower third: sits at the bottom of the picture, centered.
      Solid black behind it by default, so it never turns white in a window capture or a projector.
      Add ?alpha=1 only when this page is used as an OBS Browser Source and you want it see-through. */
-  body[data-layout="lower"] { background:#000; align-items:flex-end; padding-bottom:5vh; }
+  body[data-layout="lower"] { background:#000; align-items:flex-end; justify-content:center; padding-bottom:5vh; }
   body.alpha[data-layout="lower"] { background:transparent; }
   html.alpha { background:transparent; }
   body[data-layout="lower"] .stage {
-    width:92vw; padding:2.2vh 2.4vw; border-radius:14px; border-left:6px solid var(--ref);
+    width:92vw; padding:2.2vh 2.4vw; border-radius:14px;
+    border-top:5px solid var(--ref);
     background:rgba(8,13,32,.9);
   }
   body[data-layout="lower"] #ref { font-size:clamp(16px, 2.8vh, 30px); margin-bottom:.3em; }
-  body[data-layout="lower"] #ref::before { display:none; }
+  body[data-layout="lower"] #ref::before, body[data-layout="lower"] #ref::after { display:none; }
   body[data-layout="lower"] .meta { margin-top:.7em; }
 
   #idle { position:fixed; inset:0; display:none; align-items:center; justify-content:center;
