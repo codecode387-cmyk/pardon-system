@@ -28,6 +28,7 @@
   .btn.live { background:var(--live); border-color:var(--live); color:#2a0808; font-weight:600; }
   .btn.ghost { background:transparent; color:var(--mute); }
   .btn.sm { padding:5px 9px; font-size:13px; }
+  .quick { display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin-left:auto; }
   .btn:disabled { opacity:.45; cursor:default; }
   select, input[type=text] { font:inherit; color:var(--ink); background:var(--bg); border:1px solid var(--line); border-radius:8px; padding:8px 10px; max-width:100%; }
 
@@ -166,6 +167,7 @@
     <section class="panel" aria-labelledby="h-screen">
       <div class="panel-head">
         <h2 id="h-screen">On screen</h2>
+        <div class="quick" id="quick" role="group" aria-label="Quick translation switch"></div>
         <button class="btn" id="clear">Clear screen</button>
       </div>
       <div class="preview" id="previewBox"><iframe id="previewFrame" src="display.html?preview=1" title="Display preview"></iframe></div>
@@ -347,6 +349,7 @@ async function loadTranslations() {
   let saved = null;
   try { saved = localStorage.getItem("vs:tr"); } catch (_) {}
   sel.value = saved && [...sel.options].some((o) => o.value === saved) ? saved : "free:kjv";
+  renderQuick();
 
   const warn = (data.warnings || [])[0];
   const yvWarn = (data.yvWarnings || [])[0];
@@ -398,9 +401,45 @@ $("ykey").placeholder = yvKey() ? "A YouVersion key is in use. Paste a new one t
 function showNotice(t) { $("noticeTxt").textContent = t; $("notice").hidden = false; }
 $("noticeX").onclick = () => { $("notice").hidden = true; try { localStorage.setItem("vs:notice", "1"); } catch (_) {} };
 
+// Quick translation buttons beside the screen preview. Change the abbreviations here to change the buttons.
+const QUICK = ["KJV", "TPT", "AMP", "NIV", "WMB"];
+const QUICK_ORDER = { KJV: ["free:", "yv:", "bible:"], other: ["yv:", "bible:", "free:"] };   // which source to prefer when a translation exists in several
+function quickOption(abbr) {
+  const opts = [...$("tr").options];
+  const cur = $("tr").selectedOptions[0];
+  if (cur && (cur.dataset.abbr || "").toUpperCase() === abbr) return cur;
+  const order = QUICK_ORDER[abbr] || QUICK_ORDER.other;
+  for (const exact of [true, false]) {
+    const m = opts.filter((o) => { const a = (o.dataset.abbr || "").toUpperCase(); return exact ? a === abbr : a.startsWith(abbr); });
+    for (const pre of order) { const f = m.find((o) => o.value.startsWith(pre)); if (f) return f; }
+    if (m.length) return m[0];
+  }
+  return null;
+}
+function renderQuick() {
+  const box = $("quick");
+  if (!box) return;
+  const cur = $("tr").value;
+  box.replaceChildren(...QUICK.map((abbr) => {
+    const b = document.createElement("button");
+    b.type = "button"; b.className = "btn sm"; b.textContent = abbr;
+    const o = quickOption(abbr);
+    if (!o) { b.disabled = true; b.title = abbr + " is not available. Check your keys under 'Not seeing NIV, NLT…'."; }
+    else {
+      b.title = o.textContent;
+      const on = o.value === cur;
+      if (on) b.classList.add("primary");
+      b.setAttribute("aria-pressed", String(on));
+      b.onclick = () => { if ($("tr").value === o.value) return; $("tr").value = o.value; $("tr").onchange(); };
+    }
+    return b;
+  }));
+}
+
 const trLabel = () => { const o = $("tr").selectedOptions[0]; return o ? o.dataset.abbr : ""; };
 
 $("tr").onchange = async () => {
+  renderQuick();
   try { localStorage.setItem("vs:tr", $("tr").value); } catch (_) {}
   const onScreenRef = current && current.ref;
   items.forEach((it) => loadItem(it, false));
