@@ -1,7 +1,7 @@
 // GET /api/dg-token  ->  { token }
 // Gives the operator page a short-lived Deepgram token, so your real Deepgram key never reaches the browser.
 // Vercel environment variables:
-//   DEEPGRAM_API_KEY   (required)  your Deepgram key
+//   DEEPGRAM_API_KEY   (required)  your Deepgram key. It needs Member permission or higher, or Deepgram answers 403.
 //   OPERATOR_PIN       (recommended) any PIN you choose; without it, anyone who finds your site could use your Deepgram credit
 
 module.exports = async (req, res) => {
@@ -21,7 +21,8 @@ module.exports = async (req, res) => {
     });
     const d = await r.json().catch(() => ({}));
     if (!r.ok || !d.access_token) {
-      return res.status(502).json({ error: "Deepgram refused the request (status " + r.status + "). Check the key and its permissions." });
+      const why = d.err_msg || d.message || d.error || "";
+      return res.status(502).json({ error: "Deepgram refused the request (status " + r.status + ")" + (why ? ": " + why : "") + ". Check the key and its permissions." });
     }
     return res.status(200).json({ token: d.access_token, expires_in: d.expires_in });
   } catch (e) {
