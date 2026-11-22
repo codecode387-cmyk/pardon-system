@@ -27,6 +27,7 @@
   .btn.primary { background:var(--accent); border-color:var(--accent); color:var(--accent-ink); font-weight:600; }
   .btn.live { background:var(--live); border-color:var(--live); color:#2a0808; font-weight:600; }
   .btn.ghost { background:transparent; color:var(--mute); }
+  .btn.sm { padding:5px 9px; font-size:13px; }
   .btn:disabled { opacity:.45; cursor:default; }
   select, input[type=text] { font:inherit; color:var(--ink); background:var(--bg); border:1px solid var(--line); border-radius:8px; padding:8px 10px; max-width:100%; }
 
@@ -74,12 +75,16 @@
   #searchForm { margin-bottom:10px; }
   #searchForm input { flex:1; width:auto; min-width:0; }
   #msg { min-height:20px; margin:0 0 10px; color:var(--mute); font-size:14px; }
+
   .item { display:flex; gap:14px; align-items:flex-start; justify-content:space-between; padding:14px; margin-bottom:10px; background:var(--panel-2); border:1px solid var(--line); border-radius:10px; }
+  .item > div:first-child { flex:1; min-width:0; }
   .item.onscreen { border-color:var(--ok); }
   .item h3 { margin:0 0 4px; font-size:15px; font-weight:600; }
   .item .tag { margin-left:8px; font-size:12px; font-weight:500; color:var(--ok); }
   .snippet { margin:0; color:var(--mute); font-size:14px; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
-  .actions { display:flex; gap:8px; flex:none; }
+  .item .actions { display:flex; flex-direction:column; align-items:flex-end; gap:8px; flex:none; }
+  .item .actions .row, .item .stepper { display:flex; gap:6px; }
+
   .rowset { display:flex; flex-wrap:wrap; gap:10px 16px; margin:14px 0 0; }
   .rowset label { display:flex; align-items:center; gap:8px; color:var(--mute); font-size:13px; }
   .rowset select { max-width:230px; }
@@ -517,12 +522,13 @@ function markOnScreen() {
 async function loadItem(it, autoShow) {
   const snip = it.el.querySelector(".snippet");
   const btn = it.el.querySelector(".show");
-  snip.textContent = "Loading…"; btn.disabled = true;
+  const steps = it.el.querySelectorAll(".step");
+  snip.textContent = "Loading…"; btn.disabled = true; steps.forEach((b) => { b.disabled = true; });
   try {
     it.verse = await fetchVerse(it.ref);
     it.el.querySelector("h3 .name").textContent = `${it.verse.reference} (${it.verse.translation})`;
     snip.textContent = it.verse.text;
-    btn.disabled = false;
+    btn.disabled = false; steps.forEach((b) => { b.disabled = false; });
     if (autoShow) publish(it.verse);
   } catch (e) {
     it.verse = null;
@@ -530,15 +536,42 @@ async function loadItem(it, autoShow) {
   }
 }
 
+// Previous / next verse or chapter, starting from this card's verse. The card follows the new verse and it goes on screen.
+async function stepItem(it, nav, unit) {
+  if (it.busy || !it.verse) return;
+  it.busy = true;
+  const steps = it.el.querySelectorAll(".step");
+  steps.forEach((b) => { b.disabled = true; });
+  try {
+    const v = await fetchVerse(it.ref, { nav, unit });
+    it.ref = v.ref; it.verse = v;
+    it.el.querySelector(".name").textContent = `${v.reference} (${v.translation})`;
+    it.el.querySelector(".snippet").textContent = v.text;
+    seen.set(lower(v.ref), Date.now());
+    publish(v);
+    showNav(v.reference);
+  } catch (e) { setMsg(e.message); }
+  finally { it.busy = false; steps.forEach((b) => { b.disabled = false; }); }
+}
+
 function addItem(ref, autoShow) {
   const el = document.createElement("article");
   el.className = "item";
   el.innerHTML = `<div><h3><span class="name"></span><span class="tag"></span></h3><p class="snippet"></p></div>
-    <div class="actions"><button class="btn primary show" disabled>Show</button><button class="btn ghost dismiss">Dismiss</button></div>`;
+    <div class="actions">
+      <div class="row"><button class="btn primary show" disabled>Show</button><button class="btn ghost dismiss">Dismiss</button></div>
+      <div class="stepper" role="group" aria-label="Move from this verse">
+        <button class="btn sm step" data-nav="prev" data-unit="chapter" title="Previous chapter" aria-label="Previous chapter" disabled>« Ch</button>
+        <button class="btn sm step" data-nav="prev" data-unit="verse" title="Previous verse" aria-label="Previous verse" disabled>‹ V</button>
+        <button class="btn sm step" data-nav="next" data-unit="verse" title="Next verse" aria-label="Next verse" disabled>V ›</button>
+        <button class="btn sm step" data-nav="next" data-unit="chapter" title="Next chapter" aria-label="Next chapter" disabled>Ch »</button>
+      </div>
+    </div>`;
   el.querySelector(".name").textContent = ref;
-  const it = { ref, el, verse: null };
+  const it = { ref, el, verse: null, busy: false };
   el.querySelector(".show").onclick = () => it.verse && publish(it.verse);
   el.querySelector(".dismiss").onclick = () => removeItem(it);
+  el.querySelectorAll(".step").forEach((b) => { b.onclick = () => stepItem(it, b.dataset.nav, b.dataset.unit); });
   if (!items.length) $("list").innerHTML = "";
   items.unshift(it);
   $("list").prepend(el);
@@ -1004,17 +1037,57 @@ mref.addEventListener("keydown", (e) => {
 mref.addEventListener("blur", () => setTimeout(hideSug, 120));
 
 /* ---------- search by words or description ---------- */
-// Calls /api/search. Results go into the Detected verses list; nothing reaches the screen until you press Show.
-async function searchBible(q, allowPrompt = true) {
-  const r = await fetch("/api/search?q=" + encodeURIComponent(q) + "&t=" + encodeURIComponent($("tr").value),
+// A reference such as "John 11:35" is the same in every translation. So the search only has to FIND the references
+// (through /api/search, which uses Claude and/or an API.Bible Bible), and each result is then loaded in the translation
+// selected on the page, YouVersion ones included. Nothing reaches the screen until you press Show.
+async function searchBible(q, t, allowPrompt = true) {
+  const r = await fetch("/api/search?q=" + encodeURIComponent(q) + "&t=" + encodeURIComponent(t),
     { cache: "no-store", headers: { "x-pin": lsGet("vs:pin") } });
   const d = await r.json().catch(() => null);
   if (r.status === 401 && allowPrompt) {
     const p = prompt("Enter the operator PIN:");
-    if (p) { try { localStorage.setItem("vs:pin", p.trim()); } catch (_) {} return searchBible(q, false); }
+    if (p) { try { localStorage.setItem("vs:pin", p.trim()); } catch (_) {} return searchBible(q, t, false); }
   }
-  if (!r.ok || !d) throw new Error((d && d.error) || "Search failed (" + r.status + ")");
+  if (!r.ok || !d) throw Object.assign(new Error((d && d.error) || "Search failed (" + r.status + ")"), { status: r.status });
   return d.refs || [];
+}
+
+// The API.Bible Bible ids found in the translation list (the NIV and so on), if the key gave any.
+const apiBibleIds = () => [...$("tr").options].map((o) => o.value).filter((v) => v.startsWith("bible:")).map((v) => v.slice(6));
+
+// Translations to try with the server search. YouVersion ones cannot be searched there, so an API.Bible or free one stands in.
+function searchCandidates() {
+  const cur = $("tr").value;
+  const list = [];
+  if (!cur.startsWith("yv:")) list.push(cur);
+  const ids = apiBibleIds();
+  if (ids.length) list.push("bible:" + ids[0]);
+  list.push("free:kjv");
+  return [...new Set(list)];
+}
+
+async function searchAny(q) {
+  let lastErr = null;
+  for (const t of searchCandidates()) {                   // 1st choice: the server search
+    try {
+      const refs = await searchBible(q, t);
+      if (refs.length) return refs;
+      lastErr = null;
+    } catch (e) {
+      if (e.status === 401) throw e;                      // wrong PIN: trying again will not help
+      lastErr = e;
+    }
+  }
+  const ids = apiBibleIds();                              // 2nd choice: search straight from this browser with the saved API.Bible key
+  if (localKey() && ids.length && typeof BibleCore !== "undefined" && BibleCore.searchApiBible) {
+    try {
+      const refs = await BibleCore.searchApiBible(q, ids[0], localKey());
+      if (refs.length) return refs;
+      lastErr = null;
+    } catch (e) { lastErr = lastErr || e; }
+  }
+  if (lastErr) throw lastErr;
+  return [];
 }
 
 $("searchForm").onsubmit = async (e) => {
@@ -1024,9 +1097,9 @@ $("searchForm").onsubmit = async (e) => {
   $("searchBtn").disabled = true;
   setMsg("Searching…");
   try {
-    const refs = await searchBible(q);
+    const refs = await searchAny(q);
     if (!refs.length) { setMsg("Nothing found. Try different words."); return; }
-    setMsg("Found " + refs.length + ". Press Show on the one you want.");
+    setMsg("Found " + refs.length + ", shown in " + trLabel() + ". Press Show on the one you want.");
     refs.slice().reverse().forEach((ref) => {          // reversed so the best match ends up on top
       const found = detectReferences(ref);
       (found.length ? found : [ref]).forEach((r) => { seen.set(lower(r), Date.now()); addItem(r, false); });
