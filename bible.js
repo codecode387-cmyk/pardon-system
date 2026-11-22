@@ -148,7 +148,12 @@
     try { r = await fetch(`${YV}/bibles/${bibleId}/passages/${usfm(p)}?format=text`, { headers: yvHeaders(key) }); }
     catch (_) { throw new Fail(502, "Could not reach YouVersion. Check the internet connection."); }
     if (r.status === 401 || r.status === 403) throw new Fail(403, "YouVersion did not accept the key for this translation. Check the key, and that this Bible is enabled for your app.");
-    if (!r.ok) throw new Fail(404, "Verse not found in this translation");
+    if (!r.ok) {
+      let why = "";
+      try { const e = await r.json(); why = clean(e.message || e.error || e.detail || ""); } catch (_) {}
+      if (r.status === 404) throw new Fail(404, "Verse not found in this translation (it may not include " + p.book + ")" + (why ? ": " + why : ""));
+      throw new Fail(r.status === 429 ? 429 : 502, "YouVersion answered " + r.status + " for this verse" + (why ? ": " + why : "") + ".");
+    }
     const d = await r.json();
     if (!yvCopy.has(bibleId)) {                              // the verse reply has no copyright line, so read it once from the Bible's details
       let c = "";
