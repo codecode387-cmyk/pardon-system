@@ -121,6 +121,21 @@
     return { reference: clean(d.reference), text: clean(d.content), copyright: clean(d.copyright) };
   }
 
+  /* ---------- word search through API.Bible (used from the browser when the server has no search set up) ---------- */
+  // Returns references such as "John 11:35". A reference is the same in every translation, so the result can be
+  // shown in any translation, YouVersion ones included.
+  async function searchApiBible(q, bibleId, key) {
+    if (!key) throw new Fail(501, "Word search needs your API.Bible key. Paste it under “Not seeing NIV…” on this page.");
+    if (!/^[\w-]{8,40}$/.test(String(bibleId || ""))) throw new Fail(400, "Bad Bible id");
+    let r;
+    try { r = await fetch(`https://rest.api.bible/v1/bibles/${bibleId}/search?query=${encodeURIComponent(q)}&limit=5&sort=relevance`, { headers: { "api-key": key } }); }
+    catch (_) { throw new Fail(502, "Could not reach API.Bible. Check the internet connection."); }
+    if (r.status === 401 || r.status === 403) throw new Fail(403, "API.Bible did not accept the key for searching.");
+    if (!r.ok) throw new Fail(r.status, "API.Bible search answered " + r.status);
+    const d = (await r.json()).data || {};
+    return [...(d.verses || []), ...(d.passages || [])].map((v) => v.reference).filter(Boolean).slice(0, 5);
+  }
+
   /* ---------- YouVersion Platform API ---------- */
   const YV = "https://api.youversion.com/v1";
   const yvHeaders = (key) => ({ "X-YVP-App-Key": key, "Accept": "application/json" });
@@ -248,6 +263,6 @@
     return { translations: list, ...info };
   }
 
-  const API = { lookup, listTranslations, parseRef, fmt };
+  const API = { lookup, listTranslations, searchApiBible, parseRef, fmt };
   if (typeof module !== "undefined" && module.exports) module.exports = API; else root.BibleCore = API;
 })(typeof window !== "undefined" ? window : globalThis);
