@@ -1037,57 +1037,80 @@ mref.addEventListener("keydown", (e) => {
 mref.addEventListener("blur", () => setTimeout(hideSug, 120));
 
 /* ---------- search by words or description ---------- */
-// A reference such as "John 11:35" is the same in every translation. So the search only has to FIND the references
-// (through /api/search, which uses Claude and/or an API.Bible Bible), and each result is then loaded in the translation
-// selected on the page, YouVersion ones included. Nothing reaches the screen until you press Show.
-async function searchBible(q, t, allowPrompt = true) {
-  const r = await fetch("/api/search?q=" + encodeURIComponent(q) + "&t=" + encodeURIComponent(t),
-    { cache: "no-store", headers: { "x-pin": lsGet("vs:pin") } });
+// A reference such as "John 11:35" is the same in every translation. The server (/api/search) finds candidate references
+// (Claude and/or exact-word search in the matching API.Bible Bible). Then THIS page loads every candidate in the translation
+// you selected (KJV, NKJV, AMP, TPT, any YouVersion one) and sorts them by how well the words match that translation's real text.
+// Nothing reaches the screen until you press Show.
+const STOPWORDS = new Set("the and for that with this from have you your his her him not was are but who which will shall unto they them their there then than into out all one say said what when where how why does did has had".split(" "));
+const stemWord = (w) => { w = w.replace(/(ing|eth|est|ed|es|ly|s)$/, ""); return w.length > 6 ? w.slice(0, 6) : w; };
+const searchWords = (s) => (String(s).toLowerCase().match(/[a-z]+/g) || []).filter((w) => w.length > 2 && !STOPWORDS.has(w)).map(stemWord);
+
+function matchScore(q, text) {
+  const qw = searchWords(q);
+  if (!qw.length) return 0;
+  const tset = new Set(searchWords(text));
+  let hit = 0;
+  for (const w of qw) if (tset.has(w)) hit++;
+  let s = hit / qw.length;
+  if (String(text).toLowerCase().includes(q.toLowerCase().trim())) s += 1;     // the exact phrase is in this translation
+  return s;
+}
+
+async function searchBible(q, info, allowPrompt = true) {
+  const qs = new URLSearchParams({ q, t: info.t, abbr: info.abbr, name: info.name });
+  const r = await fetch("/api/search?" + qs, { cache: "no-store", headers: { "x-pin": lsGet("vs:pin") } });
   const d = await r.json().catch(() => null);
   if (r.status === 401 && allowPrompt) {
     const p = prompt("Enter the operator PIN:");
-    if (p) { try { localStorage.setItem("vs:pin", p.trim()); } catch (_) {} return searchBible(q, t, false); }
+    if (p) { try { localStorage.setItem("vs:pin", p.trim()); } catch (_) {} return searchBible(q, info, false); }
   }
   if (!r.ok || !d) throw Object.assign(new Error((d && d.error) || "Search failed (" + r.status + ")"), { status: r.status });
   return d.refs || [];
 }
 
-// The API.Bible Bible ids found in the translation list (the NIV and so on), if the key gave any.
-const apiBibleIds = () => [...$("tr").options].map((o) => o.value).filter((v) => v.startsWith("bible:")).map((v) => v.slice(6));
-
-// Translations to try with the server search. YouVersion ones cannot be searched there, so an API.Bible or free one stands in.
-function searchCandidates() {
-  const cur = $("tr").value;
-  const list = [];
-  if (!cur.startsWith("yv:")) list.push(cur);
-  const ids = apiBibleIds();
-  if (ids.length) list.push("bible:" + ids[0]);
-  list.push("free:kjv");
-  return [...new Set(list)];
+// Describes the selected translation to the server: its API.Bible id when it has one (or when API.Bible has a Bible with
+// the same abbreviation, such as KJV, NKJV or AMP), plus its abbreviation and full name.
+function searchInfo() {
+  const o = $("tr").selectedOptions[0];
+  const abbr = o ? (o.dataset.abbr || "") : "";
+  const name = o ? o.textContent.replace(/^.*? - /, "") : "";
+  let t = $("tr").value;
+  if (!t.startsWith("bible:")) {
+    const m = [...$("tr").options].find((x) => x.value.startsWith("bible:") && (x.dataset.abbr || "").toUpperCase() === abbr.toUpperCase());
+    t = m ? m.value : "";
+  }
+  return { t, abbr, name };
 }
 
 async function searchAny(q) {
-  let lastErr = null;
-  for (const t of searchCandidates()) {                   // 1st choice: the server search
-    try {
-      const refs = await searchBible(q, t);
-      if (refs.length) return refs;
-      lastErr = null;
-    } catch (e) {
-      if (e.status === 401) throw e;                      // wrong PIN: trying again will not help
-      lastErr = e;
+  const info = searchInfo();
+  let refs = [], lastErr = null;
+  try { refs = await searchBible(q, info); }                       // 1st choice: the server search
+  catch (e) { if (e.status === 401) throw e; lastErr = e; }
+  if (!refs.length && localKey() && typeof BibleCore !== "undefined" && BibleCore.searchApiBible) {   // 2nd: straight from this browser
+    const opts = [...$("tr").options].filter((o) => o.value.startsWith("bible:"));
+    const same = opts.filter((o) => o.value === info.t || (o.dataset.abbr || "").toUpperCase() === info.abbr.toUpperCase());
+    const ids = [...new Set([...same, ...opts].map((o) => o.value.slice(6)))].slice(0, 2);
+    for (const id of ids) {
+      try {
+        const found = await BibleCore.searchApiBible(q, id, localKey());
+        if (found.length) { refs = found; lastErr = null; break; }
+      } catch (e) { lastErr = lastErr || e; }
     }
   }
-  const ids = apiBibleIds();                              // 2nd choice: search straight from this browser with the saved API.Bible key
-  if (localKey() && ids.length && typeof BibleCore !== "undefined" && BibleCore.searchApiBible) {
-    try {
-      const refs = await BibleCore.searchApiBible(q, ids[0], localKey());
-      if (refs.length) return refs;
-      lastErr = null;
-    } catch (e) { lastErr = lastErr || e; }
-  }
-  if (lastErr) throw lastErr;
-  return [];
+  if (!refs.length && lastErr) throw lastErr;
+  return refs;
+}
+
+// Loads each candidate in the selected translation and puts the best textual match first.
+async function rankRefs(q, refs) {
+  const uniq = [...new Set(refs.slice(0, 8).map((r) => { const f = detectReferences(r); return f.length ? f[0] : r; }))];
+  const got = await Promise.all(uniq.map(async (ref, i) => {
+    try { const v = await fetchVerse(ref); return { ref, i, score: matchScore(q, v.text) }; }
+    catch (_) { return { ref, i, score: -1 }; }
+  }));
+  got.sort((a, b) => b.score - a.score || a.i - b.i);
+  return { refs: got.map((x) => x.ref), best: got.length ? got[0].score : 0 };
 }
 
 $("searchForm").onsubmit = async (e) => {
@@ -1097,12 +1120,16 @@ $("searchForm").onsubmit = async (e) => {
   $("searchBtn").disabled = true;
   setMsg("Searching…");
   try {
-    const refs = await searchAny(q);
-    if (!refs.length) { setMsg("Nothing found. Try different words."); return; }
-    setMsg("Found " + refs.length + ", shown in " + trLabel() + ". Press Show on the one you want.");
+    const found = await searchAny(q);
+    if (!found.length) { setMsg("Nothing found. Try different words."); return; }
+    setMsg("Checking the wording in " + trLabel() + "…");
+    const { refs, best } = await rankRefs(q, found);
+    setMsg("Found " + refs.length + ", best match first, shown in " + trLabel() + "." +
+      (best < 0.5 ? " The words may be worded differently in this translation, so check the verse before showing it." : "") +
+      " Press Show on the one you want.");
     refs.slice().reverse().forEach((ref) => {          // reversed so the best match ends up on top
-      const found = detectReferences(ref);
-      (found.length ? found : [ref]).forEach((r) => { seen.set(lower(r), Date.now()); addItem(r, false); });
+      const f = detectReferences(ref);
+      (f.length ? f : [ref]).forEach((r) => { seen.set(lower(r), Date.now()); addItem(r, false); });
     });
   } catch (err) { setMsg(err.message); }
   finally { $("searchBtn").disabled = false; }
