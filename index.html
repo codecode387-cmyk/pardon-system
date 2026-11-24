@@ -188,6 +188,10 @@
       </div>
       <p id="navMsg" role="status"></p>
       <p id="heard"></p>
+      <form class="manual" id="cmdForm" style="margin-top:8px">
+        <input type="text" id="cmdIn" style="flex:1;width:auto;min-width:0" placeholder='Type a command to test it, e.g. find me where Jesus died' aria-label="Type a command" autocomplete="off">
+        <button class="btn" type="submit">Run</button>
+      </form>
       <div class="settings">
         <label>Translation <select id="tr"></select></label>
         <label>Layout
@@ -723,6 +727,8 @@ function onSpeech(fin, interimText, utteranceText) {
   interimFired = live.length;
   if (interimText) liveTranslation(interimText);
   if (fin) liveTranslation(fin);
+  if (interimText) liveSearch(interimText);
+  if (fin) liveSearch(fin);
   if (fin) {
     fullText += fin;
     finalBuf = (finalBuf + fin).slice(-3000); lastFinalAt = Date.now();
@@ -756,7 +762,7 @@ function dgAudio() {
 }
 function dgUrl(useTerms) {
   const p = new URLSearchParams({ model: "nova-3", language: "en", punctuate: "true", smart_format: "true",
-    interim_results: "true", endpointing: "500" });
+    interim_results: "true", endpointing: "300" });
   if (useTerms) DG_TERMS.forEach((t) => p.append("keyterm", t));
   return "wss://api.deepgram.com/v1/listen?" + p;
 }
@@ -1109,7 +1115,7 @@ async function searchBible(q, info, allowPrompt = true) {
     if (p) { try { localStorage.setItem("vs:pin", p.trim()); } catch (_) {} return searchBible(q, info, false); }
   }
   if (!r.ok || !d) throw Object.assign(new Error((d && d.error) || "Search failed (" + r.status + ")"), { status: r.status });
-  return d.refs || [];
+  return { refs: d.refs || [], via: d.via || [] };
 }
 
 // Describes the selected translation to the server: its API.Bible id when it has one (or when API.Bible has a Bible with
@@ -1128,25 +1134,25 @@ function searchInfo() {
 
 async function searchAny(q) {
   const info = searchInfo();
-  let refs = [], lastErr = null;
-  try { refs = await searchBible(q, info); }                       // 1st choice: the server search
+  let res = { refs: [], via: [] }, lastErr = null;
+  try { res = await searchBible(q, info); }                        // 1st choice: the server search
   catch (e) { if (e.status === 401) throw e; lastErr = e; }
-  if (!refs.length && localKey() && typeof BibleCore !== "undefined" && BibleCore.searchApiBible) {   // 2nd: straight from this browser
+  if (!res.refs.length && localKey() && typeof BibleCore !== "undefined" && BibleCore.searchApiBible) {   // 2nd: straight from this browser
     const opts = [...$("tr").options].filter((o) => o.value.startsWith("bible:"));
     const same = opts.filter((o) => o.value === info.t || (o.dataset.abbr || "").toUpperCase() === info.abbr.toUpperCase());
     const ids = [...new Set([...same, ...opts].map((o) => o.value.slice(6)))].slice(0, 2);
     for (const id of ids) {
       try {
         const found = await BibleCore.searchApiBible(q, id, localKey());
-        if (found.length) { refs = found; lastErr = null; break; }
+        if (found.length) { res = { refs: found, via: ["bible"] }; lastErr = null; break; }
       } catch (e) { lastErr = lastErr || e; }
     }
   }
-  if (!refs.length && lastErr) throw lastErr;
-  return refs;
+  if (!res.refs.length && lastErr) throw lastErr;
+  return res;
 }
 
-// Loads each candidate in the selected translation and puts the best textual match first.
+// Without the AI, load each candidate in the selected translation and put the best textual match first.
 async function rankRefs(q, refs) {
   const uniq = [...new Set(refs.slice(0, 8).map((r) => { const f = detectReferences(r); return f.length ? f[0] : r; }))];
   const got = await Promise.all(uniq.map(async (ref, i) => {
@@ -1157,23 +1163,30 @@ async function rankRefs(q, refs) {
   return { refs: got.map((x) => x.ref), best: got.length ? got[0].score : 0 };
 }
 
+// Typed or spoken: finds the places, lists them (best first) and tells you where they are. You then say "show it" or press Show.
 async function runSearch(q) {
   if (q.length < 3) { setMsg("Type a few more words."); return; }
   $("searchBtn").disabled = true;
-  setMsg("Searching…");
+  setMsg("Searching…"); showNav("Searching for: " + q);
   try {
-    const found = await searchAny(q);
-    if (!found.length) { setMsg("Nothing found. Try different words."); return; }
-    setMsg("Checking the wording in " + trLabel() + "…");
-    const { refs, best } = await rankRefs(q, found);
-    setMsg("Found " + refs.length + ", best match first, shown in " + trLabel() + "." +
-      (best < 0.5 ? " The words may be worded differently in this translation, so check the verse before showing it." : "") +
-      " Press Show on the one you want.");
-    refs.slice().reverse().forEach((ref) => {          // reversed so the best match ends up on top
-      const f = detectReferences(ref);
-      (f.length ? f : [ref]).forEach((r) => { seen.set(lower(r), Date.now()); addItem(r, false); });
+    const { refs: found, via } = await searchAny(q);
+    if (!found.length) { setMsg("Nothing found. Try different words."); showNav("Nothing found for: " + q, true); return; }
+    let refs = [...new Set(found.slice(0, 8).map((r) => { const f = detectReferences(r); return f.length ? f[0] : r; }))];
+    let note = "";
+    if (!via.includes("ai")) {                                   // the AI answer is already in order of meaning; only reorder exact-word results
+      setMsg("Checking the wording in " + trLabel() + "…");
+      const ranked = await rankRefs(q, refs);
+      refs = ranked.refs;
+      if (ranked.best < 0.5) note = " The words may be worded differently in " + trLabel() + ", so check it before showing.";
+    }
+    const top = refs.slice(0, 3).join(", ") + (refs.length > 3 ? " and " + (refs.length - 3) + " more" : "");
+    setMsg("Found: " + top + ". Best match first, shown in " + trLabel() + "." + note);
+    showNav("Found: " + top + ' - say "show it" to put the first one on screen');
+    refs.slice().reverse().forEach((ref, i, arr) => {           // reversed so the best match ends up on top
+      seen.set(lower(ref), Date.now());
+      addItem(ref, i === arr.length - 1 && $("auto").checked);
     });
-  } catch (err) { setMsg(err.message); }
+  } catch (err) { setMsg(err.message); showNav(err.message, true); }
   finally { $("searchBtn").disabled = false; }
 }
 $("searchForm").onsubmit = (e) => { e.preventDefault(); runSearch($("searchQ").value.trim()); };
@@ -1233,6 +1246,21 @@ function liveTranslation(text) {                        // "give me TPT" switche
   const tr = detectTranslation(text, false);
   if (tr) fireOnce("tr:" + tr, 4000, () => switchTranslation(tr));
 }
+function liveSearch(text) {                             // "...find me where Jesus died in the Bible" searches as soon as "in the Bible" is heard
+  if (!$("voice").checked || typeof detectSearch !== "function") return;
+  if (!/\b(?:in|from)\s+(?:the\s+)?(?:bible|scriptures?)[\s.!?]*$/i.test(text.trim())) return;
+  const q = detectSearch(text);
+  if (q) fireOnce("search:" + q, 8000, () => { setHeard(text, "search"); voiceSearch(q); });
+}
+$("cmdForm").onsubmit = (e) => {
+  e.preventDefault();
+  const t = $("cmdIn").value.trim();
+  if (!t) return;
+  $("cmdIn").value = "";
+  const steps = commandsIn(t);
+  if (steps.length) { steps.forEach(([n, u]) => navigate(n, u, "Typed")); setHeard(t, "next/previous"); }
+  else runFinalCommands(t, true);
+};
 function setHeard(text, did) {
   const el = $("heard");
   if (el) el.textContent = text ? "Heard: “" + text.trim().slice(0, 120) + "”" + (did ? " → " + did : "") : "";
@@ -1250,6 +1278,13 @@ const aiState = { busy: false, off: false, times: [] };
 const SMART_GATE = /^(?:(?:ok|okay|now|so|and|then|please|hey|can|could|you|would|will|lets|let's|let|us|just|pastor|operator)\s+)*(?:go|show|give|switch|change|put|use|find|search|look|read|open|turn|bring|display|take|move|jump|skip|clear|hide|remove|make|set|dismiss|blank|bigger|smaller|lower|full|next|previous|back|forward|where|which|what\s+verse|the\s+(?:next|previous|first|second|third|last)|first|second|third|latest|newest)\b/i;
 const WAKE = /^(?:hey\s+|ok(?:ay)?\s+)?(?:verse\s+)?screen[\s,.:;!-]+/i;
 const CLEAR_RE = /^(?:(?:ok|okay|now|so|please|hey|can|could|you)\s+)*(?:clear|blank|hide|remove)(?:\s+(?:the\s+)?(?:screen|verse|display|text))?(?:\s+(?:please|now))?$|^take\s+(?:it|that|the\s+verse)\s+off(?:\s+(?:the\s+)?screen)?$/;
+const LIST_SHOW = /^(?:(?:ok|okay|now|so|and|then|please|can|could|you)\s+)*(?:show|display|put|bring|read)\s+(?:it|that|this|(?:the\s+)?(?:first|second|third|fourth|top|best|latest|newest)(?:\s+(?:one|result|verse))?|number\s+(?:one|two|three|four))(?:\s+(?:up|on(?:\s+the\s+screen)?|please|now))*$/;
+function showFromList(plain) {
+  const n = /second|number two/.test(plain) ? 2 : /third|number three/.test(plain) ? 3 : /fourth|number four/.test(plain) ? 4 : 1;
+  const it = items.filter((i) => i.verse)[n - 1];
+  if (it) { publish(it.verse); showNav("Voice: " + it.verse.reference); setHeard(plain, "show " + it.verse.reference); }
+  else { showNav("There is no verse in the list yet.", true); setHeard(plain, "the list is empty"); }
+}
 function smartOn() { return $("smart").checked && !aiState.off; }
 try { if (localStorage.getItem("vs:smart") === "0") $("smart").checked = false; } catch (_) {}
 $("smart").onchange = () => { try { localStorage.setItem("vs:smart", $("smart").checked ? "1" : "0"); } catch (_) {} };
@@ -1347,8 +1382,8 @@ function switchTranslation(abbr) {
   showNav("Voice: switched to " + opt.dataset.abbr);
 }
 
-function runFinalCommands(text) {                       // runs on finished sentences only, so "next week" is never mistaken for "next"
-  if (!$("voice").checked) return;
+function runFinalCommands(text, force) {               // runs on finished sentences only, so "next week" is never mistaken for "next"
+  if (!force && !$("voice").checked) return;
   if (typeof detectTranslation === "function") {
     const tr = detectTranslation(text, true);
     if (tr) { fireOnce("tr:" + tr, 4000, () => switchTranslation(tr)); setHeard(text, "translation " + tr.toUpperCase()); return; }
@@ -1359,6 +1394,7 @@ function runFinalCommands(text) {                       // runs on finished sent
   }
   const plain = text.toLowerCase().replace(/[^a-z\s]/g, " ").replace(/\s+/g, " ").trim();
   if (CLEAR_RE.test(plain)) { clearScreen(); showNav("Voice: screen cleared"); setHeard(text, "clear screen"); return; }
+  if (LIST_SHOW.test(plain)) { showFromList(plain); return; }
   if (typeof detectCommands !== "function") return;     // old parser.js: skip voice commands instead of failing
   const cmds = detectCommands(text, true);
   let did = cmds.some((c) => c.explicit) ? "next/previous (done as you spoke)" : "";
