@@ -231,19 +231,32 @@ const SEARCH_LEAD = "(?:(?:ok|okay|now|so|and|please|hey|can|could|you|lets|let'
 const SEARCH_VERB = "(?:find|get|pull\\s+up|bring\\s+up|search\\s+the\\s+bible\\s+for|search\\s+for|search|look\\s+up|look\\s+for|show)\\s+(?:me\\s+|us\\s+)?(?:for\\s+)?";
 const SEARCH_RE = new RegExp("^" + SEARCH_LEAD + SEARCH_VERB + "(.{3,})$");
 const SEARCH_BAD = /^(?:the\s+)?(?:next|previous|prior|back|forward)\b|^(?:verse|chapter)\s+\d|^\d/;
+// Said in the middle of longer speech ("...amen, find me where Jesus died in the Bible"): only the clear forms count,
+// and the LAST one wins.
+const SEARCH_STRONG = new RegExp("\\b(?:find|get|search\\s+for|look\\s+up|look\\s+for|show|bring\\s+up|pull\\s+up)\\s+(?:me\\s+|us\\s+)(?:for\\s+)?(?=(?:where|which\\s+verse|what\\s+verse|the\\s+verse|the\\s+scripture|the\\s+story|the\\s+passage|the\\s+part|the\\s+place|who|when|how)\\b)", "g");
+const SEARCH_FILLER = new Set("the verse scripture scriptures story passage part place where which what who when how is was did does do of in about a an me for and to it that".split(" "));
 
 function detectSearch(text) {
   const t = String(text).toLowerCase().replace(/[^a-z0-9\s':\-]/g, " ").replace(/\s+/g, " ").trim();
+  let raw = null, scope = t;
   const m = SEARCH_RE.exec(t);
-  if (!m) return null;
-  const q = m[1]
+  if (m) raw = m[1];
+  else {
+    let end = null, g;
+    SEARCH_STRONG.lastIndex = 0;
+    while ((g = SEARCH_STRONG.exec(t)) !== null) end = g.index + g[0].length;
+    if (end !== null) { raw = t.slice(end); scope = raw; }
+  }
+  if (!raw) return null;
+  const q = raw
     .replace(/\s+(?:in|from)\s+(?:the\s+)?(?:bible|scripture|scriptures|word)(?:\s+please)?$/, "")
     .replace(/\s+please$/, "")
     .trim();
   if (q.length < 3 || SEARCH_BAD.test(q)) return null;
+  if (!q.split(" ").some((w) => w.length >= 3 && !SEARCH_FILLER.has(w))) return null;   // "find me the verse" has nothing to look for
   if (detectReferences(q).length) return null;                       // "show me John 3:16" is a reference, not a search
-  if (detectTranslation(t, false) || detectTranslation(q, true)) return null;   // "show me NIV" is a translation switch
-  if (explicitSteps(t).length) return null;                          // "show me the next verse"
+  if (detectTranslation(scope, false) || detectTranslation(q, true)) return null;   // "show me NIV" is a translation switch
+  if (explicitSteps(scope).length) return null;                      // "show me the next verse"
   return q;
 }
 
