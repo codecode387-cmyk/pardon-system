@@ -65,6 +65,7 @@
   .nav svg { flex:none; }
   #navMsg { min-height:20px; margin:8px 0 0; color:var(--mute); font-size:13px; }
   #navMsg.bad { color:var(--live); }
+  #heard { min-height:18px; margin:2px 0 0; color:var(--mute); font-size:12px; }
   details.help { flex-basis:100%; color:var(--mute); font-size:14px; }
   details.help summary { cursor:pointer; }
   details.help p { margin:8px 0 0; }
@@ -186,6 +187,7 @@
         <button class="btn" id="nextCh" disabled>Chapter <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 6l6 6-6 6M5 6l6 6-6 6"/></svg></button>
       </div>
       <p id="navMsg" role="status"></p>
+      <p id="heard"></p>
       <div class="settings">
         <label>Translation <select id="tr"></select></label>
         <label>Layout
@@ -195,7 +197,7 @@
           </select>
         </label>
         <label class="grow"><input type="checkbox" id="auto"> Show detected verses automatically</label>
-        <label class="grow"><input type="checkbox" id="voice" checked> Voice commands: "next", "go back", "go down to 15", "go to John 3:16", "give me NIV"</label>
+        <label class="grow"><input type="checkbox" id="voice" checked> Voice commands: "next", "go back", "go down to 15", "go to John 3:16", "give me NIV", "find me where Solomon died"</label>
         <details class="help"><summary>Not seeing NIV, NLT or other translations?</summary><div id="trStatus"><p>Checking…</p></div>
           <div class="keybox">
             <div class="keylabel">API.Bible key</div>
@@ -718,6 +720,8 @@ function onSpeech(fin, interimText, utteranceText) {
   const live = commandsIn(interim);
   if (live.length > interimFired) runVoice(live.slice(interimFired));
   interimFired = live.length;
+  if (interimText) liveTranslation(interimText);
+  if (fin) liveTranslation(fin);
   if (fin) {
     fullText += fin;
     finalBuf = (finalBuf + fin).slice(-3000); lastFinalAt = Date.now();
@@ -1152,9 +1156,7 @@ async function rankRefs(q, refs) {
   return { refs: got.map((x) => x.ref), best: got.length ? got[0].score : 0 };
 }
 
-$("searchForm").onsubmit = async (e) => {
-  e.preventDefault();
-  const q = $("searchQ").value.trim();
+async function runSearch(q) {
   if (q.length < 3) { setMsg("Type a few more words."); return; }
   $("searchBtn").disabled = true;
   setMsg("Searching…");
@@ -1172,7 +1174,8 @@ $("searchForm").onsubmit = async (e) => {
     });
   } catch (err) { setMsg(err.message); }
   finally { $("searchBtn").disabled = false; }
-};
+}
+$("searchForm").onsubmit = (e) => { e.preventDefault(); runSearch($("searchQ").value.trim()); };
 
 /* ---------- keyboard ---------- */
 addEventListener("keydown", (e) => {
@@ -1205,6 +1208,7 @@ $("nextCh").onclick = () => navigate("next", "chapter");
 
 const CMD = /\b(next|previous|prior)\s+(verse|chapter)\b/gi;
 function commandsIn(text) {
+  if (typeof explicitSteps === "function") return explicitSteps(text).map((s) => [s.nav, s.unit]);
   const out = [];
   for (const m of text.matchAll(CMD)) out.push([m[1].toLowerCase() === "next" ? "next" : "prev", m[2].toLowerCase()]);
   return out;
@@ -1213,6 +1217,29 @@ let interimFired = 0;                                  // commands already acted
 function runVoice(cmds) {
   if (!$("voice").checked || !current) return;
   cmds.forEach(([n, u]) => navigate(n, u, "Voice"));
+}
+
+const firedAt = new Map();                              // stops the same spoken command from running twice (live, then again when the sentence ends)
+function fireOnce(key, ms, fn) {
+  const now = Date.now();
+  if (firedAt.has(key) && now - firedAt.get(key) < ms) return false;
+  firedAt.set(key, now);
+  fn();
+  return true;
+}
+function liveTranslation(text) {                        // "give me TPT" switches as soon as it is heard, not after the pause
+  if (!$("voice").checked || typeof detectTranslation !== "function") return;
+  const tr = detectTranslation(text, false);
+  if (tr) fireOnce("tr:" + tr, 4000, () => switchTranslation(tr));
+}
+function setHeard(text, did) {
+  const el = $("heard");
+  if (el) el.textContent = text ? "Heard: “" + text.trim().slice(0, 120) + "”" + (did ? " → " + did : "") : "";
+}
+function voiceSearch(q) {
+  $("searchQ").value = q;
+  showNav("Voice search: " + q);
+  runSearch(q);
 }
 
 function goToRef(ref) {                                 // "go to John 3:16": show it straight away
@@ -1249,16 +1276,23 @@ function runFinalCommands(text) {                       // runs on finished sent
   if (!$("voice").checked) return;
   if (typeof detectTranslation === "function") {
     const tr = detectTranslation(text, true);
-    if (tr) { switchTranslation(tr); return; }
+    if (tr) { fireOnce("tr:" + tr, 4000, () => switchTranslation(tr)); setHeard(text, "translation " + tr.toUpperCase()); return; }
+  }
+  if (typeof detectSearch === "function") {
+    const q = detectSearch(text);
+    if (q) { fireOnce("search:" + q, 8000, () => voiceSearch(q)); setHeard(text, "search"); return; }
   }
   if (typeof detectCommands !== "function") return;     // old parser.js: skip voice commands instead of failing
-  for (const c of detectCommands(text, true)) {
+  const cmds = detectCommands(text, true);
+  let did = cmds.some((c) => c.explicit) ? "next/previous (done as you spoke)" : "";
+  for (const c of cmds) {
     if (c.explicit) continue;                           // "next verse" etc. are handled live above
-    if (c.type === "ref") goToRef(c.ref);
-    else if (!current) showNav("Show a verse first, then I can move around it.", true);
-    else if (c.type === "step") navigate(c.nav, c.unit, "Voice");
-    else jumpRelative(c);
+    if (c.type === "ref") { goToRef(c.ref); did = "go to " + c.ref; }
+    else if (!current) { showNav("Show a verse first, then I can move around it.", true); did = "nothing on screen yet"; }
+    else if (c.type === "step") { navigate(c.nav, c.unit, "Voice"); did = c.nav + " " + c.unit; }
+    else { jumpRelative(c); did = "jump"; }
   }
+  setHeard(text, did || "not a command");
 }
 
 /* ---------- service notes ---------- */
