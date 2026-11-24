@@ -1,18 +1,22 @@
-// GET /api/search?q=where jesus wept&t=bible:ID&abbr=TPT&name=The Passion Translation
-//   ->  { refs: ["John 11:35", ...], via: ["ai", "bible"] }
+// GET /api/search?q=where jesus died&t=bible:ID&abbr=TPT&name=The Passion Translation
+//   ->  { refs: ["Matthew 27:50", ...], via: ["ai", "bible"] }
 //
 // Finds places in the Bible from words or a description. Set up either (or both) in Vercel:
-//   ANTHROPIC_API_KEY  understands descriptions ("where David killed Goliath") and is told which translation you use
-//   BIBLE_API_KEY      exact-word search through API.Bible. It searches the SAME translation as the one selected on the
-//                      page when API.Bible has it (KJV, NKJV, AMP, NIV...), then a couple of other English Bibles.
+//   ANTHROPIC_API_KEY  understands descriptions ("where Jesus died", "the verse about not worrying")
+//   BIBLE_API_KEY      exact-word search through API.Bible, in the same translation as the one selected on the page when possible
 //   SEARCH_BIBLE_ID    optional: an extra API.Bible Bible id to search in
 // OPERATOR_PIN protects it, the same PIN as /api/dg-token.
 //
-// YouVersion has no word-search service, so for YouVersion-only translations (TPT and others) this returns the best
-// candidates from the sources above. The page then loads every candidate in the translation you selected and sorts
-// them by how well the words really match that translation's text.
+// Both searches run at the same time, so the answer comes back as fast as the slower one (never the two added together).
+// The AI answer goes first; exact-word matches only fill in behind it.
 
 const MODEL = process.env.ANTHROPIC_MODEL || "claude-haiku-5-5";
+
+const withTimeout = (p, ms) => {
+  let timer;
+  return Promise.race([p, new Promise((_, rej) => { timer = setTimeout(() => rej(new Error("timed out")), ms); })])
+    .finally(() => clearTimeout(timer));
+};
 
 async function viaAI(q, trName) {
   const r = await fetch("https://api.anthropic.com/v1/messages", {
@@ -20,10 +24,11 @@ async function viaAI(q, trName) {
     headers: { "x-api-key": process.env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "content-type": "application/json" },
     body: JSON.stringify({
       model: MODEL,
-      max_tokens: 300,
-      system: "You help a church operator find Bible passages quickly. The operator gives words from a verse, or describes a story, person or topic. " +
-        (trName ? `The operator is reading from the ${trName}, so the words may follow that translation's wording rather than the King James wording. ` : "") +
-        "Reply with JSON only, no other text: {\"refs\":[\"John 11:35\"]}. Give up to 6 references, best match first, " +
+      max_tokens: 200,
+      system: "You help a church operator find Bible passages quickly. The operator gives words from a verse, or describes a story, person or topic, " +
+        "or asks where something happened ('where Jesus died', 'where Solomon died'). " +
+        (trName ? `The operator is reading from the ${trName}, so the words may follow that translation's wording. ` : "") +
+        "Reply with JSON only, no other text: {\"refs\":[\"Matthew 27:50\"]}. Give up to 5 references, best match first, " +
         "as 'Book chapter:verse' or 'Book chapter:verse-verse' using standard English book names (for example 1 Corinthians, Psalms). " +
         "If nothing fits, reply {\"refs\":[]}. Never invent verses.",
       messages: [{ role: "user", content: q }],
@@ -34,7 +39,7 @@ async function viaAI(q, trName) {
   const text = (d.content || []).map((b) => b.text || "").join("");
   const m = /\{[\s\S]*\}/.exec(text);
   const refs = m ? (JSON.parse(m[0]).refs || []) : [];
-  return refs.map(String).slice(0, 6);
+  return refs.map(String).slice(0, 5);
 }
 
 // English Bibles this API.Bible key can use (kept for an hour).
@@ -49,7 +54,7 @@ async function listBibles() {
 }
 const abbrOf = (b) => String(b.abbreviationLocal || b.abbreviation || "").toUpperCase();
 
-// Which API.Bible Bibles to search, best first: the selected one, one with the same abbreviation (KJV, NKJV, AMP...), then fallbacks.
+// Which API.Bible Bibles to search, best first: the selected one, one with the same abbreviation, then fallbacks.
 async function chooseBibleIds(t, abbr) {
   const ids = [];
   const add = (id) => { if (id && !ids.includes(id)) ids.push(id); };
@@ -92,28 +97,35 @@ module.exports = async (req, res) => {
     return res.status(501).json({ error: "Search is not set up on the server. Add ANTHROPIC_API_KEY (best) or BIBLE_API_KEY in Vercel and redeploy." });
   }
 
-  const refs = [], via = [], errors = [];
+  const errors = [];
+  const jobs = [];
+  if (hasAI) jobs.push(withTimeout(viaAI(q, name || abbr), 7000).then((refs) => ({ tag: "ai", refs })));
+  if (hasBible) {
+    jobs.push(withTimeout((async () => {
+      const ids = await chooseBibleIds(t, abbr);
+      const out = [];
+      for (const id of ids.slice(0, hasAI ? 1 : 3)) {      // with the AI answering too, one exact-word search is enough
+        if (out.length >= 6) break;
+        try { out.push(...await viaBible(q, id)); } catch (e) { errors.push(e.message); }
+      }
+      return out;
+    })(), 8000).then((refs) => ({ tag: "bible", refs })));
+  }
+  const settled = await Promise.allSettled(jobs);
+  const got = {};
+  for (const s of settled) { if (s.status === "fulfilled") got[s.value.tag] = s.value.refs; else errors.push(s.reason && s.reason.message || "failed"); }
+
+  const refs = [], via = [];
   const add = (arr, tag) => {
     let any = false;
-    for (const r of arr) {
+    for (const r of arr || []) {
       const ref = String(r).trim();
       if (ref && !refs.some((x) => x.toLowerCase() === ref.toLowerCase())) { refs.push(ref); any = true; }
     }
     if (any && !via.includes(tag)) via.push(tag);
   };
-
-  if (hasAI) {
-    try { add(await viaAI(q, name || abbr), "ai"); } catch (e) { errors.push(e.message); }
-  }
-  if (hasBible) {
-    try {
-      const ids = await chooseBibleIds(t, abbr);
-      for (const id of ids.slice(0, 3)) {
-        if (refs.length >= 6) break;
-        try { add(await viaBible(q, id), "bible"); } catch (e) { errors.push(e.message); }
-      }
-    } catch (e) { errors.push(e.message); }
-  }
+  add(got.ai, "ai");
+  add((got.bible || []).slice(0, got.ai && got.ai.length ? 2 : 6), "bible");   // exact-word matches only fill in behind the AI answer
 
   if (!refs.length && errors.length) return res.status(502).json({ error: errors[0] });
   return res.status(200).json({ refs: refs.slice(0, 8), via });
