@@ -1,8 +1,10 @@
-// Finds Bible references in spoken or typed text.
+// Finds Bible references and spoken commands in spoken or typed text.
 // Handles: "John 3:16", "Romans chapter eight verse twenty eight", "first Corinthians 13 verses 4 to 7",
 // "Psalm twenty three", "John three colon sixteen", "Jude 5", plus common mis-hearings.
-// New: chapter numbers are checked against the real Bible (no more "Romans 40"), and
+// Chapter numbers are checked against the real Bible (no "Romans 40"), and
 // single-chapter books are understood ("Jude 5" = Jude 1:5).
+// Commands: next/previous verse or chapter, "go back one chapter", "go to John 3:16", "give me TPT",
+// and "find me where Solomon died in the Bible" (voice search).
 
 const BOOKS = [
   ["Genesis"], ["Exodus"], ["Leviticus"], ["Numbers"], ["Deuteronomy", "duteronomy"], ["Joshua"], ["Judges"], ["Ruth"],
@@ -139,17 +141,27 @@ const REL_GO = new RegExp(GO_WORDS + REL);
 const REL_WHOLE = new RegExp("^" + LEAD + REL + "$");
 const CH_GO = new RegExp(GO_WORDS + "chapter\\s+(\\d{1,3})\\b(?!\\s*(?:and\\s+)?verse)");
 const CH_WHOLE = new RegExp("^" + LEAD + "chapter\\s+(\\d{1,3})$");
-const EXPLICIT = /\b(next|previous|prior)\s+(verse|chapter)\b/g;
 const FILLER = new Set(["ok", "okay", "please", "now", "and", "the", "lets", "let's", "let", "us", "go", "to", "one", "1", "again", "so", "then", "just", "can", "you", "we", "amen", "pastor"]);
+
+// "next verse", "previous chapter", "prior verse", "go back one chapter", "go forward a verse"
+// Returns [{ nav: "next" | "prev", unit: "verse" | "chapter" }, ...]
+const STEP_RE = /\b(?:(next|previous|prior)|(?:go\s+)?(back|forward)(?:\s+(?:a|one|1))?)\s+(verse|chapter)\b/g;
+function explicitSteps(text) {
+  const t = normalize(String(text)).replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ");
+  const out = [];
+  for (const m of t.matchAll(STEP_RE)) {
+    const fwd = m[1] === "next" || m[2] === "forward";
+    out.push({ nav: fwd ? "next" : "prev", unit: m[3] });
+  }
+  return out;
+}
 
 // whole = true when `text` is one complete spoken phrase (a finished sentence from the speech engine).
 // Short phrases like "next" or "back" are only treated as commands when they stand alone.
 function detectCommands(text, whole) {
   const t = normalize(text).replace(/[^a-z0-9\s:'\-]/g, " ").replace(/\s+/g, " ").trim();
   const cmds = [];
-  for (const m of t.matchAll(EXPLICIT)) {
-    cmds.push({ type: "step", nav: m[1] === "next" ? "next" : "prev", unit: m[2], explicit: true });
-  }
+  for (const s of explicitSteps(text)) cmds.push({ type: "step", nav: s.nav, unit: s.unit, explicit: true });
   let m = REL_GO.exec(t) || (whole && REL_WHOLE.exec(t));
   if (m) cmds.push({ type: "verse", ch: m[1] ? +m[1] : null, v1: +m[2], v2: m[3] ? +m[3] : null });
   else if (whole && (m = NUM_GO.exec(t))) cmds.push({ type: "verse", ch: null, v1: +m[1], v2: m[2] ? +m[2] : null });
@@ -159,8 +171,8 @@ function detectCommands(text, whole) {
     if (words.length <= 6) {
       const core = words.filter((w) => !FILLER.has(w));
       if (core.length === 1) {
-        if (["next", "forward", "continue"].includes(core[0])) cmds.push({ type: "step", nav: "next", unit: "verse", explicit: false });
-        if (["back", "previous", "prior"].includes(core[0])) cmds.push({ type: "step", nav: "prev", unit: "verse", explicit: false });
+        if (["next", "forward", "continue", "onward"].includes(core[0])) cmds.push({ type: "step", nav: "next", unit: "verse", explicit: false });
+        if (["back", "previous", "prior", "backward", "backwards"].includes(core[0])) cmds.push({ type: "step", nav: "prev", unit: "verse", explicit: false });
       }
     }
   }
@@ -183,7 +195,7 @@ function relativeRef(current, cmd) {
 
 /* ---------- spoken translation switch ---------- */
 // "give me KJV version", "switch to NIV", "use the new living translation", or just "NIV"
-// "give me TPT", "switch to the passion translation" (YouVersion)
+// "give me TPT", "switch to the passion translation", "give me WMB" (YouVersion)
 const TR_NAMES = [
   ["nkjv", "new\\s+king\\s+james(?:\\s+version)?|n\\s*k\\s*j\\s*v"],
   ["kjv",  "king\\s+james(?:\\s+version)?|k\\s*j\\s*v"],
@@ -191,13 +203,16 @@ const TR_NAMES = [
   ["nlt",  "new\\s+living(?:\\s+translation)?|n\\s*l\\s*t"],
   ["esv",  "english\\s+standard(?:\\s+version)?|e\\s*s\\s*v"],
   ["nasb", "new\\s+american\\s+standard(?:\\s+bible)?|n\\s*a\\s*s\\s*b"],
-  ["amp",  "amplified(?:\\s+bible)?|amp\\s+(?:version|translation|bible)"],
+  ["amp",  "amplified(?:\\s+bible)?|amp\\s+(?:version|translation|bible)|a\\s*m\\s*p"],
   ["web",  "world\\s+english(?:\\s+bible)?|web\\s+(?:version|translation|bible)"],
-  ["tpt",  "passion\\s+translation|passion|t\\s*p\\s*t|tea\\s*p\\s*t"],
+  ["wmb",  "world\\s+messianic(?:\\s+bible)?|w\\s*m\\s*b"],
+  ["tpt",  "passion\\s+translation|passion|t\\s*p\\s*t|tea\\s*p\\s*t|t\\s*b\\s*t|d\\s*p\\s*t|tea\\s*pea\\s*tea"],
 ];
 const TR_TRIGGER = "(?:give\\s+(?:me|us)|switch(?:\\s+over)?\\s+to|change(?:\\s+over)?\\s+to|use|show\\s+(?:me|us)|put\\s+it\\s+in|read\\s+(?:it\\s+)?in|let'?s\\s+use|go\\s+to|move\\s+to|i\\s+want|bring\\s+up)";
 const TR_TAIL = "(?:\\s+(?:version|translation|bible))?(?:\\s+(?:please|now))?";
 
+// whole = false: the trigger phrase may be anywhere in the text (used on words still being spoken, so it switches at once).
+// whole = true: a bare name on its own ("NIV") also counts.
 function detectTranslation(text, whole) {
   const t = String(text).toLowerCase().replace(/[^a-z\s']/g, " ").replace(/\s+/g, " ").trim();
   for (const [abbr, names] of TR_NAMES) {
@@ -208,4 +223,28 @@ function detectTranslation(text, whole) {
   return null;
 }
 
-if (typeof module !== "undefined") module.exports = { detectReferences, detectCommands, detectGoTo, relativeRef, detectTranslation };
+/* ---------- spoken search ---------- */
+// "find me where Solomon died in the Bible", "search for the verse about not worrying", "look up David and Goliath"
+// Returns the words to search for, or null. Only a finished sentence that STARTS with find/search/look up/show me counts,
+// so normal preaching does not start searches.
+const SEARCH_LEAD = "(?:(?:ok|okay|now|so|and|please|hey|can|could|you|lets|let's|let|us|just|pastor)\\s+)*";
+const SEARCH_VERB = "(?:find|get|pull\\s+up|bring\\s+up|search\\s+the\\s+bible\\s+for|search\\s+for|search|look\\s+up|look\\s+for|show)\\s+(?:me\\s+|us\\s+)?(?:for\\s+)?";
+const SEARCH_RE = new RegExp("^" + SEARCH_LEAD + SEARCH_VERB + "(.{3,})$");
+const SEARCH_BAD = /^(?:the\s+)?(?:next|previous|prior|back|forward)\b|^(?:verse|chapter)\s+\d|^\d/;
+
+function detectSearch(text) {
+  const t = String(text).toLowerCase().replace(/[^a-z0-9\s':\-]/g, " ").replace(/\s+/g, " ").trim();
+  const m = SEARCH_RE.exec(t);
+  if (!m) return null;
+  const q = m[1]
+    .replace(/\s+(?:in|from)\s+(?:the\s+)?(?:bible|scripture|scriptures|word)(?:\s+please)?$/, "")
+    .replace(/\s+please$/, "")
+    .trim();
+  if (q.length < 3 || SEARCH_BAD.test(q)) return null;
+  if (detectReferences(q).length) return null;                       // "show me John 3:16" is a reference, not a search
+  if (detectTranslation(t, false) || detectTranslation(q, true)) return null;   // "show me NIV" is a translation switch
+  if (explicitSteps(t).length) return null;                          // "show me the next verse"
+  return q;
+}
+
+if (typeof module !== "undefined") module.exports = { detectReferences, detectCommands, detectGoTo, relativeRef, detectTranslation, detectSearch, explicitSteps };
