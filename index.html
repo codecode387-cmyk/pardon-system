@@ -6,7 +6,7 @@
 <title>Verse Screen</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
 <style>
   :root { --bg:#0d111a; --panel:#141a27; --panel-2:#1a2132; --line:#263048; --ink:#e8ecf4; --mute:#8b95aa;
           --accent:#7f95ff; --accent-ink:#0a0e24; --live:#ff6b6b; --ok:#4ccf94; }
@@ -178,6 +178,10 @@
           <input type="text" id="relayLink" readonly>
           <button class="btn" type="button" id="relayCopy">Copy</button>
         </div>
+        <div class="row" style="margin-top:8px">
+          <input type="text" id="roomCode" aria-label="Room code" spellcheck="false" maxlength="40" autocomplete="off">
+          <button class="btn" type="button" id="roomSave">Use this room code</button>
+        </div>
         <p id="relayMsg" role="status"></p>
       </div>
       <div class="nav" role="group" aria-label="Move through the Bible">
@@ -254,6 +258,7 @@
   }
 </script>
 <script src="parser.js"></script>
+<script src="topics.js"></script>
 <script src="bible.js"></script>
 <script>
 const $ = (id) => document.getElementById(id);
@@ -510,6 +515,16 @@ const room = (() => {
   return r;
 })();
 $("relayLink").value = new URL("display.html", location.href).href + "?room=" + room;
+// The room code ties the operator page and the display together. The display link above already contains it.
+// To keep the same link on every computer (for example the laptop and the EasyWorship computer), type one code here on the
+// operator page, press the button, then copy the display link again.
+$("roomCode").value = room;
+$("roomSave").onclick = () => {
+  const c = $("roomCode").value.trim().toLowerCase();
+  if (!/^[a-z0-9]{8,40}$/.test(c)) { relayStatus(false, "A room code is 8 to 40 letters and numbers with no spaces, for example gracechurch2026."); return; }
+  try { localStorage.setItem("vs:room", c); } catch (_) {}
+  location.reload();
+};
 $("relayCopy").onclick = async () => {
   try { await navigator.clipboard.writeText($("relayLink").value); }
   catch (_) { $("relayLink").select(); document.execCommand("copy"); }
@@ -532,7 +547,11 @@ async function relayCall(method, payload) {
 }
 let relayChain = Promise.resolve();                       // one message at a time, so they arrive in order
 function relay(payload) { relayChain = relayChain.then(() => relayCall("POST", payload)); }
-relayCall("GET");
+relayCall("GET").then(() => {
+  if (location.protocol === "file:" || /^(localhost|127\.|192\.168\.|10\.)/.test(location.hostname)) {
+    relayStatus(false, "This page is open from this computer only (" + location.host + "), so the display link will not work on other computers. Open the operator page from your real website address and copy the link again.");
+  }
+});
 
 function send(payload) {
   try { localStorage.setItem(LS, JSON.stringify(payload)); } catch (_) {}
@@ -1115,7 +1134,7 @@ async function searchBible(q, info, allowPrompt = true) {
     if (p) { try { localStorage.setItem("vs:pin", p.trim()); } catch (_) {} return searchBible(q, info, false); }
   }
   if (!r.ok || !d) throw Object.assign(new Error((d && d.error) || "Search failed (" + r.status + ")"), { status: r.status });
-  return { refs: d.refs || [], via: d.via || [] };
+  return { refs: d.refs || [], via: d.via || [], hint: d.hint || "" };
 }
 
 // Describes the selected translation to the server: its API.Bible id when it has one (or when API.Bible has a Bible with
@@ -1169,11 +1188,12 @@ async function runSearch(q) {
   $("searchBtn").disabled = true;
   setMsg("Searching…"); showNav("Searching for: " + q);
   try {
-    const { refs: found, via } = await searchAny(q);
-    if (!found.length) { setMsg("Nothing found. Try different words."); showNav("Nothing found for: " + q, true); return; }
+    const local = typeof findTopics === "function" ? findTopics(q) : [];      // well-known passages: instant, no internet or AI needed
+    const { refs: found, via, hint } = local.length ? { refs: local, via: ["local"], hint: "" } : await searchAny(q);
+    if (!found.length) { const why = hint || "Nothing found. Try different words."; setMsg(why); showNav("Nothing found for: " + q + ". " + why, true); return; }
     let refs = [...new Set(found.slice(0, 8).map((r) => { const f = detectReferences(r); return f.length ? f[0] : r; }))];
     let note = "";
-    if (!via.includes("ai")) {                                   // the AI answer is already in order of meaning; only reorder exact-word results
+    if (!via.includes("ai") && !via.includes("local")) {                                   // the AI answer is already in order of meaning; only reorder exact-word results
       setMsg("Checking the wording in " + trLabel() + "…");
       const ranked = await rankRefs(q, refs);
       refs = ranked.refs;
