@@ -198,6 +198,7 @@
         </label>
         <label class="grow"><input type="checkbox" id="auto"> Show detected verses automatically</label>
         <label class="grow"><input type="checkbox" id="voice" checked> Voice commands: "next", "go back", "go down to 15", "go to John 3:16", "give me NIV", "find me where Solomon died"</label>
+        <label class="grow"><input type="checkbox" id="smart" checked> Smart commands: the AI understands any other instruction, e.g. "put it in lower third", "show the second one", "go to the verse after next" (needs ANTHROPIC_API_KEY)</label>
         <details class="help"><summary>Not seeing NIV, NLT or other translations?</summary><div id="trStatus"><p>Checking…</p></div>
           <div class="keybox">
             <div class="keylabel">API.Bible key</div>
@@ -1242,6 +1243,80 @@ function voiceSearch(q) {
   runSearch(q);
 }
 
+/* ---------- smart commands: the AI understands any spoken instruction ---------- */
+// The fast built-in commands above always run first. Only a finished sentence that looks like an instruction, and that nothing
+// above understood, goes to /api/command. Say "screen, ..." (for example "screen, make it bigger") to always send a sentence.
+const aiState = { busy: false, off: false, times: [] };
+const SMART_GATE = /^(?:(?:ok|okay|now|so|and|then|please|hey|can|could|you|would|will|lets|let's|let|us|just|pastor|operator)\s+)*(?:go|show|give|switch|change|put|use|find|search|look|read|open|turn|bring|display|take|move|jump|skip|clear|hide|remove|make|set|dismiss|blank|bigger|smaller|lower|full|next|previous|back|forward|where|which|what\s+verse|the\s+(?:next|previous|first|second|third|last)|first|second|third|latest|newest)\b/i;
+const WAKE = /^(?:hey\s+|ok(?:ay)?\s+)?(?:verse\s+)?screen[\s,.:;!-]+/i;
+const CLEAR_RE = /^(?:(?:ok|okay|now|so|please|hey|can|could|you)\s+)*(?:clear|blank|hide|remove)(?:\s+(?:the\s+)?(?:screen|verse|display|text))?(?:\s+(?:please|now))?$|^take\s+(?:it|that|the\s+verse)\s+off(?:\s+(?:the\s+)?screen)?$/;
+function smartOn() { return $("smart").checked && !aiState.off; }
+try { if (localStorage.getItem("vs:smart") === "0") $("smart").checked = false; } catch (_) {}
+$("smart").onchange = () => { try { localStorage.setItem("vs:smart", $("smart").checked ? "1" : "0"); } catch (_) {} };
+
+function aiGate(text) {
+  const t = text.trim();
+  if (WAKE.test(t)) return t.replace(WAKE, "").trim() || null;
+  if (t.split(/\s+/).length > 22) return null;           // long sentences are preaching, not commands
+  return SMART_GATE.test(t) ? t : null;
+}
+
+async function aiCommand(text, allowPrompt = true) {
+  if (aiState.busy) return;
+  const now = Date.now();
+  aiState.times = aiState.times.filter((t) => now - t < 60000);
+  if (aiState.times.length >= 20) return;                 // at most 20 questions a minute
+  aiState.times.push(now);
+  aiState.busy = true;
+  setHeard(text, "asking the AI…");
+  try {
+    const body = { text, current: current ? current.ref : "", translation: trLabel(),
+      translations: [...$("tr").options].map((o) => o.dataset.abbr).filter(Boolean),
+      layout: $("layout").value, auto: $("auto").checked, detected: items.filter((i) => i.verse).length };
+    const r = await fetch("/api/command", { method: "POST", cache: "no-store",
+      headers: { "Content-Type": "application/json", "x-pin": lsGet("vs:pin") }, body: JSON.stringify(body) });
+    const d = await r.json().catch(() => null);
+    if (r.status === 401 && allowPrompt) {
+      const p = prompt("Enter the operator PIN:");
+      if (p) { try { localStorage.setItem("vs:pin", p.trim()); } catch (_) {} aiState.busy = false; return aiCommand(text, false); }
+    }
+    if (r.status === 501) { aiState.off = true; setHeard(text, "smart commands are not set up (add ANTHROPIC_API_KEY in Vercel and redeploy)"); return; }
+    if (!r.ok || !d) throw new Error((d && d.error) || "status " + r.status);
+    applyAction(d.action || { type: "none" }, text);
+  } catch (e) { setHeard(text, "AI error: " + e.message); }
+  finally { aiState.busy = false; }
+}
+
+function applyAction(a, text) {
+  switch (a.type) {
+    case "show": {
+      const f = detectReferences(String(a.ref || ""));
+      if (!f.length) { setHeard(text, "the AI gave a reference I could not read"); return; }
+      goToRef(f[0]); setHeard(text, "show " + f[0]); return;
+    }
+    case "step": {
+      if (!current) { showNav("Show a verse first, then I can move around it.", true); setHeard(text, "nothing on screen yet"); return; }
+      const n = Math.max(1, Math.min(10, +a.count || 1));
+      for (let i = 0; i < n; i++) navigate(a.nav === "prev" ? "prev" : "next", a.unit === "chapter" ? "chapter" : "verse", "Voice");
+      setHeard(text, a.nav + " " + a.unit + (n > 1 ? " x" + n : "")); return;
+    }
+    case "translation": switchTranslation(String(a.abbr || "").toLowerCase()); setHeard(text, "translation " + a.abbr); return;
+    case "search": voiceSearch(a.query); setHeard(text, "search"); return;
+    case "clear": clearScreen(); showNav("Voice: screen cleared"); setHeard(text, "clear screen"); return;
+    case "layout":
+      if (a.value === "lower" || a.value === "full") { $("layout").value = a.value; $("layout").onchange(); showNav("Voice: " + (a.value === "lower" ? "lower third" : "full screen")); setHeard(text, "layout " + a.value); }
+      return;
+    case "auto": $("auto").checked = !!a.value; showNav("Voice: automatic showing " + (a.value ? "on" : "off")); setHeard(text, "automatic " + (a.value ? "on" : "off")); return;
+    case "show_item": {
+      const it = items.filter((i) => i.verse)[Math.max(1, +a.n || 1) - 1];
+      if (it) { publish(it.verse); setHeard(text, "show " + it.verse.reference); }
+      else setHeard(text, "no verse in the list at that place");
+      return;
+    }
+    default: setHeard(text, "not a command");
+  }
+}
+
 function goToRef(ref) {                                 // "go to John 3:16": show it straight away
   const k = lower(ref);
   seen.set(k, Date.now());
@@ -1282,6 +1357,8 @@ function runFinalCommands(text) {                       // runs on finished sent
     const q = detectSearch(text);
     if (q) { fireOnce("search:" + q, 8000, () => voiceSearch(q)); setHeard(text, "search"); return; }
   }
+  const plain = text.toLowerCase().replace(/[^a-z\s]/g, " ").replace(/\s+/g, " ").trim();
+  if (CLEAR_RE.test(plain)) { clearScreen(); showNav("Voice: screen cleared"); setHeard(text, "clear screen"); return; }
   if (typeof detectCommands !== "function") return;     // old parser.js: skip voice commands instead of failing
   const cmds = detectCommands(text, true);
   let did = cmds.some((c) => c.explicit) ? "next/previous (done as you spoke)" : "";
@@ -1293,6 +1370,7 @@ function runFinalCommands(text) {                       // runs on finished sent
     else { jumpRelative(c); did = "jump"; }
   }
   setHeard(text, did || "not a command");
+  if (!did && smartOn()) { const q = aiGate(text); if (q) aiCommand(q); }
 }
 
 /* ---------- service notes ---------- */
