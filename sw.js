@@ -25,7 +25,14 @@ self.addEventListener("fetch", (e) => {
     caches.open(CACHE).then(async (cache) => {
       const cached = await cache.match(PAGE);
       const fresh = fetch(PAGE, { cache: "no-cache" })
-        .then((r) => { if (r && r.ok) cache.put(PAGE, r.clone()); return r; })
+        .then(async (r) => {
+          if (r && r.ok) {
+            // a response that came through a redirect cannot be used to answer a page load, so store a plain copy
+            const copy = r.redirected ? new Response(await r.clone().blob(), { status: 200, headers: { "Content-Type": "text/html; charset=utf-8" } }) : r.clone();
+            await cache.put(PAGE, copy);
+          }
+          return r;
+        })
         .catch(() => null);
       if (cached) { e.waitUntil(fresh); return cached; }                 // show the saved copy now, update it in the background
       const r = await fresh;                                              // first visit: nothing saved yet
