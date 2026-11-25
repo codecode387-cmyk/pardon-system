@@ -97,6 +97,7 @@
   var $ = function (id) { return document.getElementById(id); };
   var lastTs = 0, hideTimer = null, statusTimer = null;
   var MAX_AGE = 6 * 3600 * 1000;
+  var swState = "not supported by this browser";
   var RELAY_AGE = 12 * 3600 * 1000;                       // a verse sent more than 12 hours ago is not shown again by itself
 
   function setStatus(text, bad, sticky) {
@@ -192,7 +193,7 @@
       var el = $("dbg");
       el.className = "on";
       el.textContent = "Verse display check\nroom code:      " + room + "\nchecks made:    " + dbg.polls + "\nlast reply:     " + dbg.http +
-        "\nverse waiting:  " + dbg.state + "\nshown on screen: " + dbg.shown + "\nthis computer's time: " + new Date().toString();
+        "\nverse waiting:  " + dbg.state + "\nshown on screen: " + dbg.shown + "\noffline copy:    " + swState + "\nthis computer's time: " + new Date().toString();
     };
     var relayOk = null;                                   // null = unknown, true = working, false = problem
     setStatus("Connecting to the operator…", false);
@@ -262,6 +263,11 @@
   if (!preview) {
     addEventListener("dblclick", toggleFullscreen);
     addEventListener("keydown", function (e) { if (e.key === "f" || e.key === "F") toggleFullscreen(); });
+
+    // Keep a saved copy of this page on this computer, so a refresh never shows a white screen (see sw.js).
+    if ("serviceWorker" in navigator && location.protocol === "https:") {
+      navigator.serviceWorker.register("/sw.js").then(function () { swState = "ready"; }, function (e) { swState = "could not start: " + ((e && e.message) || "error"); });
+    } else if ("serviceWorker" in navigator) { swState = "needs https"; }
 
     // Keep the projector computer awake for the whole service
     var wake = null;
