@@ -205,12 +205,13 @@
   function getState(cb) {
     var x, done = false, guard = null;
     try { x = new XMLHttpRequest(); } catch (e) { cb(0, null, null); return; }
-    var finish = function (status, data, date) { if (done) return; done = true; clearTimeout(guard); cb(status, data, date); };
+    var text = "";
+    var finish = function (status, data, date) { if (done) return; done = true; clearTimeout(guard); cb(status, data, date, text); };
     guard = setTimeout(function () { try { x.abort(); } catch (e) {} finish(0, null, null); }, 6000);   // a hung request must not stop the display
     x.onreadystatechange = function () {
       if (x.readyState !== 4) return;
       var d = null;
-      try { d = JSON.parse(x.responseText); } catch (e) {}
+      try { text = String(x.responseText || ""); d = JSON.parse(text); } catch (e) {}
       var date = null;
       try { date = x.getResponseHeader("Date"); } catch (e) {}
       finish(x.status, d, date);
@@ -231,23 +232,26 @@
       el.className = "on";
       el.textContent = "Verse display check\nroom code:      " + room + "\nchecks made:    " + dbg.polls + "\nlast reply:     " + dbg.http +
         "\nverse waiting:  " + dbg.state + "\nshown on screen: " + dbg.shown + "\noffline copy:    " + swState +
-        "\nthis computer's time: " + new Date().toString();
+        "\nthis computer's time: " + new Date().toString() + "\nbrowser: " + navigator.userAgent;
     };
     var relayOk = null;                                   // null = unknown, true = working, false = problem
     setStatus("Connecting to the operator…", false);
     var poll = function () {
-      getState(function (status, d, dateHeader) {
+      getState(function (status, d, dateHeader, bodyText) {
         var serverNow = dateHeader && !isNaN(Date.parse(dateHeader)) ? Date.parse(dateHeader) : new Date().getTime();
         dbg.polls++;
         if (status === 0) {
           dbg.http = "no answer (slow or no internet)";
           if (relayOk !== false) { relayOk = false; setStatus("Slow or no internet connection. Showing the last verse. Retrying…", true, true); }
         } else if (status < 200 || status > 299) {
-          dbg.http = status + " (problem)";
+          var why = String(bodyText || "").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").replace(/^\s+|\s+$/g, "").slice(0, 160);
+          dbg.http = status + " (problem)" + (why ? ": " + why : "");
           relayOk = false;
           setStatus(status === 501
             ? "Relay is not set up yet (connect Upstash Redis in Vercel and redeploy)."
-            : "Cannot reach the operator link (error " + status + "). Retrying…", true, true);
+            : (status === 401 || status === 403)
+              ? "The site refused this browser (error " + status + (why ? ": " + why.slice(0, 80) : "") + "). Retrying…"
+              : "Cannot reach the operator link (error " + status + "). Retrying…", true, true);
         } else {
           dbg.http = status + " OK";
           if (relayOk !== true) { relayOk = true; setStatus("Connected. Waiting for the operator.", false); }
