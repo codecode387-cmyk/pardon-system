@@ -67,6 +67,9 @@
   #status.on { opacity:1; }
   #status.bad { color:#ff8f8f; }
   body.preview #status { display:none; }
+  #dbg { position:fixed; left:10px; top:10px; margin:0; padding:10px 12px; max-width:92vw; background:rgba(0,0,0,.78); color:#9fe3b5; border:1px solid #2c3550;
+         border-radius:8px; font:13px/1.45 Consolas, Menlo, monospace; white-space:pre-wrap; display:none; z-index:9; }
+  #dbg.on { display:block; }
 </style>
 </head>
 <body>
@@ -77,6 +80,7 @@
 </main>
 <div id="idle">Waiting for a verse</div>
 <div id="status" role="status"></div>
+<pre id="dbg"></pre>
 
 <script>
   // Options in the address:
@@ -93,6 +97,7 @@
   var $ = function (id) { return document.getElementById(id); };
   var lastTs = 0, hideTimer = null, statusTimer = null;
   var MAX_AGE = 6 * 3600 * 1000;
+  var RELAY_AGE = 12 * 3600 * 1000;                       // a verse sent more than 12 hours ago is not shown again by itself
 
   function setStatus(text, bad, sticky) {
     var el = $("status");
@@ -151,7 +156,7 @@
     if (m.type === "show") render(m.verse, m.layout);
     else if (m.type === "clear") clearScreen();
     if (room && !preview && (m.type === "show" || m.type === "clear")) {
-      try { localStorage.setItem(LAST, JSON.stringify(m)); } catch (_) {}
+      try { localStorage.setItem(LAST, JSON.stringify({ at: Date.now(), m: m })); } catch (_) {}
     }
   }
 
@@ -174,21 +179,33 @@
   if (room && !preview) {
     try {
       var last = JSON.parse(localStorage.getItem(LAST) || "null");
-      if (last && last.ts && Date.now() - last.ts < MAX_AGE) apply(last);
+      if (last && last.m && last.at && Date.now() - last.at < MAX_AGE) apply(last.m);
     } catch (_) {}
   }
 
   /* ---------- relay: works when the display is NOT in the same browser as the operator page ---------- */
   if (room && !preview) {
     var lastChange = Date.now();
+    var dbg = { polls: 0, http: "-", state: "-", shown: "-" };
+    var showDbg = function () {
+      if (!params.has("debug")) return;
+      var el = $("dbg");
+      el.className = "on";
+      el.textContent = "Verse display check\nroom code:      " + room + "\nchecks made:    " + dbg.polls + "\nlast reply:     " + dbg.http +
+        "\nverse waiting:  " + dbg.state + "\nshown on screen: " + dbg.shown + "\nthis computer's time: " + new Date().toString();
+    };
     var relayOk = null;                                   // null = unknown, true = working, false = problem
     setStatus("Connecting to the operator…", false);
     var poll = function () {
       // A request that hangs on a bad connection must not stop the display from trying again: give up after 5 seconds.
+      var serverNow = Date.now();
       var ctl = ("AbortController" in window) ? new AbortController() : null;
       var timer = ctl ? setTimeout(function () { ctl.abort(); }, 5000) : null;
       fetch("/api/state?room=" + encodeURIComponent(room), { cache: "no-store", signal: ctl ? ctl.signal : undefined })
         .then(function (r) {
+          dbg.polls++; dbg.http = r.status + (r.ok ? " OK" : " (problem)");
+          var dh = r.headers && r.headers.get && r.headers.get("Date");
+          if (dh && !isNaN(Date.parse(dh))) serverNow = Date.parse(dh);
           if (!r.ok) {
             relayOk = false;
             setStatus(r.status === 501
@@ -201,13 +218,17 @@
         })
         .then(function (d) {
           var s = d && d.state;
-          if (s && !(s.ts && Date.now() - s.ts > MAX_AGE)) {
+          dbg.state = s ? (s.type + (s.verse ? " " + s.verse.reference : "") + (s.ts ? ", sent " + Math.round((serverNow - s.ts) / 60000) + " min ago" : "")) : "none yet (show a verse on the operator page)";
+          if (s && !(s.ts && serverNow - s.ts > RELAY_AGE)) {
             var before = lastTs;
             apply(s);
             if (lastTs !== before) lastChange = Date.now();
           }
+          dbg.shown = lastTs ? "yes" : "nothing yet";
+          showDbg();
         })
         .catch(function () {
+          dbg.http = "no answer (slow or no internet)"; showDbg();
           if (relayOk !== false) { relayOk = false; setStatus("Slow or no internet connection. Showing the last verse. Retrying…", true, true); }
         })
         .then(function () {
