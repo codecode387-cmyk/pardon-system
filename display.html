@@ -90,6 +90,12 @@
   //   display.html?room=CODE            works in ANY browser or program (EasyWorship browser, OBS, another computer) through the relay
   //   &bg=black   flat black background      &alpha=1   see-through lower third (OBS Browser Source only)
   //   &debug=1    shows a small check panel
+
+  // ---- Direct read from Upstash (skips Vercel's security check). READ-ONLY token only: it cannot change or delete anything. ----
+  // If you ever reset the Upstash password, paste the new URL and the new READ-ONLY token here.
+  var DIRECT_URL   = "https://suitable-anteater-202071.upstash.io";
+  var DIRECT_TOKEN = "ggAAAAAAAxVXAAIgcDFea3NTwEAJEeJILYh-FAHZVpfHOjcbCV8iK1Udlt1VzQ";
+
   function qget(name) {
     var m = new RegExp("[?&]" + name + "(?:=([^&]*))?(?:&|$)").exec(location.search);
     if (!m) return null;
@@ -201,10 +207,10 @@
   }
 
   /* ---------- relay: works when the display is NOT in the same browser as the operator page ---------- */
-  // One plain request with a time limit. cb(status, data, serverTimeHeader); status 0 means no answer.
-  function getState(cb) {
+  // One plain request with a time limit. cb(status, data, serverTimeHeader, bodyText); status 0 means no answer.
+  function getUrl(url, cb) {
     var x, done = false, guard = null;
-    try { x = new XMLHttpRequest(); } catch (e) { cb(0, null, null); return; }
+    try { x = new XMLHttpRequest(); } catch (e) { cb(0, null, null, ""); return; }
     var text = "";
     var finish = function (status, data, date) { if (done) return; done = true; clearTimeout(guard); cb(status, data, date, text); };
     guard = setTimeout(function () { try { x.abort(); } catch (e) {} finish(0, null, null); }, 6000);   // a hung request must not stop the display
@@ -217,10 +223,21 @@
       finish(x.status, d, date);
     };
     x.onerror = function () { finish(0, null, null); };
-    try {
-      x.open("GET", "/api/state?room=" + encodeURIComponent(room) + "&_=" + new Date().getTime(), true);   // the extra number stops old browsers from reusing an old answer
-      x.send();
-    } catch (e) { finish(0, null, null); }
+    try { x.open("GET", url, true); x.send(); } catch (e) { finish(0, null, null); }
+  }
+
+  // Way 1: read straight from Upstash. Way 2 (only if way 1 fails): the site's own /api/state.
+  function directUrl() {
+    return DIRECT_URL + "/get/" + encodeURIComponent("vs:room:" + room) + "?_token=" + encodeURIComponent(DIRECT_TOKEN);
+  }
+  function siteUrl() {
+    return "/api/state?room=" + encodeURIComponent(room) + "&_=" + new Date().getTime();   // the extra number stops old browsers from reusing an old answer
+  }
+  // Upstash answers {"result": "<json text>"} or {"result": null}. Turn it into {state: ...} like the site route does.
+  function fromDirect(d) {
+    var raw = d && d.result, s = null;
+    if (raw) { try { s = JSON.parse(raw); } catch (e) { s = null; } }
+    return { state: s };
   }
 
   if (room && !preview) {
@@ -235,40 +252,60 @@
         "\nthis computer's time: " + new Date().toString() + "\nbrowser: " + navigator.userAgent;
     };
     var relayOk = null;                                   // null = unknown, true = working, false = problem
-    setStatus("Connecting to the operator…", false);
-    var poll = function () {
-      getState(function (status, d, dateHeader, bodyText) {
-        var serverNow = dateHeader && !isNaN(Date.parse(dateHeader)) ? Date.parse(dateHeader) : new Date().getTime();
-        dbg.polls++;
-        if (status === 0) {
-          dbg.http = "no answer (slow or no internet)";
-          if (relayOk !== false) { relayOk = false; setStatus("Slow or no internet connection. Showing the last verse. Retrying…", true, true); }
-        } else if (status < 200 || status > 299) {
-          var why = String(bodyText || "").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").replace(/^\s+|\s+$/g, "").slice(0, 160);
-          dbg.http = status + " (problem)" + (why ? ": " + why : "");
-          relayOk = false;
-          setStatus(status === 501
-            ? "Relay is not set up yet (connect Upstash Redis in Vercel and redeploy)."
-            : (status === 401 || status === 403)
-              ? "The site refused this browser (error " + status + (why ? ": " + why.slice(0, 80) : "") + "). Retrying…"
-              : "Cannot reach the operator link (error " + status + "). Retrying…", true, true);
-        } else {
-          dbg.http = status + " OK";
-          if (relayOk !== true) { relayOk = true; setStatus("Connected. Waiting for the operator.", false); }
-          var s = d && d.state;
-          dbg.state = s ? (s.type + (s.verse ? " " + s.verse.reference : "") + (s.ts ? ", sent " + Math.round((serverNow - s.ts) / 60000) + " min ago" : "")) : "none yet (show a verse on the operator page)";
-          if (s && !(s.ts && serverNow - s.ts > RELAY_AGE)) {
-            var before = lastTs;
-            apply(s);
-            if (lastTs !== before) lastChange = new Date().getTime();
-          }
+
+    var handle = function (status, d, dateHeader, bodyText, source) {
+      var serverNow = (dateHeader && !isNaN(Date.parse(dateHeader))) ? Date.parse(dateHeader) : null;
+      dbg.polls++;
+      if (status === 0) {
+        dbg.http = "no answer (slow or no internet)";
+        if (relayOk !== false) { relayOk = false; setStatus("Slow or no internet connection. Showing the last verse. Retrying…", true, true); }
+      } else if (status < 200 || status > 299) {
+        var why = String(bodyText || "").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").replace(/^\s+|\s+$/g, "").slice(0, 160);
+        dbg.http = status + " (problem) " + source + (why ? ": " + why : "");
+        relayOk = false;
+        setStatus(status === 501
+          ? "Relay is not set up yet (connect Upstash Redis in Vercel and redeploy)."
+          : (status === 401 || status === 403)
+            ? "The site refused this browser (error " + status + (why ? ": " + why.slice(0, 80) : "") + "). Retrying…"
+            : "Cannot reach the operator link (error " + status + "). Retrying…", true, true);
+      } else {
+        dbg.http = status + " OK " + source;
+        if (relayOk !== true) { relayOk = true; setStatus("Connected. Waiting for the operator.", false); }
+        var s = d && d.state;
+        dbg.state = s ? (s.type + (s.verse ? " " + s.verse.reference : "") + ((s.ts && serverNow) ? ", sent " + Math.round((serverNow - s.ts) / 60000) + " min ago" : "")) : "none yet (show a verse on the operator page)";
+        // The saved verse is forgotten by the server after 12 hours, so an age check is only done when the server's clock is available.
+        var tooOld = s && s.ts && serverNow && (serverNow - s.ts > RELAY_AGE);
+        if (s && !tooOld) {
+          var before = lastTs;
+          apply(s);
+          if (lastTs !== before) lastChange = new Date().getTime();
         }
-        dbg.shown = lastTs ? "yes" : "nothing yet";
-        showDbg();
-        // quick while the service is active, slower when nothing has changed for a while
-        setTimeout(poll, new Date().getTime() - lastChange < 30000 ? 600 : 1500);
+      }
+      dbg.shown = lastTs ? "yes" : "nothing yet";
+      showDbg();
+    };
+
+    var next = function () {
+      // quick while the service is active, slower when nothing has changed for a while
+      setTimeout(poll, new Date().getTime() - lastChange < 30000 ? 600 : 1500);
+    };
+
+    var poll = function () {
+      getUrl(directUrl(), function (status, d, dateHeader, bodyText) {
+        if (status >= 200 && status <= 299) {
+          handle(status, fromDirect(d), dateHeader, bodyText, "(direct)");
+          next();
+        } else {
+          var firstStatus = status;
+          getUrl(siteUrl(), function (status2, d2, date2, body2) {
+            handle(status2, d2, date2, body2, "(site; direct gave " + (firstStatus || "no answer") + ")");
+            next();
+          });
+        }
       });
     };
+
+    setStatus("Connecting to the operator…", false);
     poll();
   } else if (!preview) {
     setStatus("Display ready. Same-browser mode: for another computer, use the link with ?room= from the operator page.", false);
