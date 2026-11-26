@@ -109,6 +109,18 @@
   #relayMsg.bad { color:var(--live); }
   .empty, .keys { margin:0; color:var(--mute); font-size:14px; }
   .keys { margin-top:12px; }
+
+  /* quick jump bar */
+  .jump { margin-top:14px; padding:12px; background:var(--panel-2); border:1px solid var(--line); border-radius:10px; }
+  .jump[hidden] { display:none; }
+  .jump-head { display:flex; flex-wrap:wrap; gap:10px 16px; align-items:center; margin-bottom:10px; }
+  .jump-head label { display:flex; align-items:center; gap:8px; color:var(--mute); font-size:13px; }
+  #jumpV { width:80px; }
+  #jumpBook { font-weight:600; font-size:14px; margin-right:auto; }
+  .chips { display:grid; grid-template-columns:repeat(auto-fill,minmax(42px,1fr)); gap:6px; max-height:140px; overflow:auto; padding-right:2px; }
+  .chip { font:inherit; font-size:14px; padding:8px 0; color:var(--ink); background:var(--bg); border:1px solid var(--line); border-radius:8px; cursor:pointer; }
+  .chip:hover { border-color:#3b4869; }
+  .chip.cur { background:var(--accent); border-color:var(--accent); color:var(--accent-ink); font-weight:600; }
 </style>
 </head>
 <body>
@@ -191,6 +203,17 @@
         <button class="btn" id="nextCh" disabled>Chapter <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 6l6 6-6 6M5 6l6 6-6 6"/></svg></button>
       </div>
       <p id="navMsg" role="status"></p>
+      <div class="jump" id="jump" hidden>
+        <div class="jump-head">
+          <span id="jumpBook"></span>
+          <label>Chapter <select id="jumpCh" aria-label="Jump to chapter"></select></label>
+          <form id="jumpForm" class="manual">
+            <input type="text" id="jumpV" inputmode="numeric" pattern="[0-9]*" placeholder="Verse #" aria-label="Type a verse number" autocomplete="off">
+            <button class="btn sm" type="submit">Go</button>
+          </form>
+        </div>
+        <div class="chips" id="jumpChips" role="group" aria-label="Pick a verse number"></div>
+      </div>
       <p id="heard"></p>
       <form class="manual" id="cmdForm" style="margin-top:8px">
         <input type="text" id="cmdIn" style="flex:1;width:auto;min-width:0" placeholder='Type a command to test it, e.g. find me where Jesus died' aria-label="Type a command" autocomplete="off">
@@ -582,6 +605,7 @@ function markOnScreen() {
     it.el.classList.toggle("onscreen", on);
     it.el.querySelector(".tag").textContent = on ? "On screen" : "";
   }
+  renderJump();
 }
 
 async function loadItem(it, autoShow) {
@@ -1221,6 +1245,54 @@ addEventListener("keydown", (e) => {
     navigate(e.key === "ArrowRight" ? "next" : "prev", e.shiftKey ? "chapter" : "verse");
   }
 });
+
+/* ---------- quick jump: pick a chapter or verse number ---------- */
+function parseCur() {
+  if (!current) return null;
+  const m = /^(.*?)\s+(\d+)(?::(\d+))?/.exec(current.ref);
+  return m ? { book: m[1], ch: +m[2], v: m[3] ? +m[3] : null } : null;
+}
+function jumpTo(ch, v) {
+  navChain = navChain.then(async () => {
+    const c = parseCur();
+    if (!c) return;
+    const ref = c.book + " " + ch + (v ? ":" + v : "");
+    try { const verse = await fetchVerse(ref); publish(verse); showNav("Jump: " + verse.reference); }
+    catch (e) { showNav(e.message, true); }
+  });
+}
+let jumpBookShown = "", jumpChipCount = 0;
+function renderJump() {
+  const c = parseCur();
+  $("jump").hidden = !c;
+  if (!c) return;
+  if (jumpBookShown !== c.book) {                      // new book: rebuild the chapter list
+    jumpBookShown = c.book;
+    const n = (typeof CHAPTERS !== "undefined" && CHAPTERS[c.book]) || c.ch;
+    $("jumpCh").replaceChildren(...Array.from({ length: Math.max(n, c.ch) }, (_, i) => new Option(i + 1, i + 1)));
+    $("jumpBook").textContent = c.book;
+  }
+  $("jumpCh").value = String(c.ch);
+  const want = Math.max(60, c.v || 0);                 // number buttons 1 to 60 (more if the verse on screen is higher)
+  if (jumpChipCount !== want) {
+    jumpChipCount = want;
+    $("jumpChips").replaceChildren(...Array.from({ length: want }, (_, i) => {
+      const b = document.createElement("button");
+      b.type = "button"; b.className = "chip"; b.textContent = i + 1;
+      b.onclick = () => { b.blur(); jumpTo(parseCur().ch, i + 1); };
+      return b;
+    }));
+  }
+  [...$("jumpChips").children].forEach((b, i) => b.classList.toggle("cur", c.v === i + 1));
+}
+$("jumpCh").onchange = () => { $("jumpCh").blur(); jumpTo(+$("jumpCh").value, 1); };
+$("jumpForm").onsubmit = (e) => {
+  e.preventDefault();
+  const n = parseInt($("jumpV").value, 10), c = parseCur();
+  if (!c || !n) return;
+  $("jumpV").value = "";
+  jumpTo(c.ch, n);
+};
 
 /* ---------- next / previous verse and chapter ---------- */
 let navChain = Promise.resolve();
