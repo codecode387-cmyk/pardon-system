@@ -12,7 +12,7 @@
      Until they load, Georgia is used. -->
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@500;600&family=Lora:wght@400;500;600&display=swap" rel="stylesheet" media="print"
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@500;600;700&family=Lora:wght@400;500;600&display=swap" rel="stylesheet" media="print"
       onload="this.media='all'; if (document.fonts && document.fonts.ready && window.fit) document.fonts.ready.then(window.fit);">
 <style>
   * { box-sizing:border-box; }
@@ -41,7 +41,8 @@
   .meta { display:flex; flex-wrap:wrap; align-items:baseline; justify-content:center; margin-top:1.3em;
           font-family:Inter, system-ui, "Segoe UI", Arial, sans-serif; text-align:center; }
   .meta span { margin:3px 9px; }
-  #tr { color:#a9c0ff; font-weight:600; font-size:2.2vh; }
+  /* Translation label, shown like (KJV): bold and large so it can be read on the TV */
+  #tr { color:#c9d7ff; font-weight:700; font-size:3.6vh; letter-spacing:.02em; }
   #copy { color:#8d97b5; font-weight:500; font-size:1.4vh; max-width:70ch; }
 
   /* Lower third: sits at the bottom of the picture, centered.
@@ -58,6 +59,7 @@
   body[data-layout="lower"] #ref { font-size:2.8vh; margin-bottom:.3em; }
   body[data-layout="lower"] #ref::before, body[data-layout="lower"] #ref::after { display:none; }
   body[data-layout="lower"] .meta { margin-top:.7em; }
+  body[data-layout="lower"] #tr { font-size:3vh; }
 
   #idle { position:fixed; left:0; top:0; right:0; bottom:0; display:none; align-items:center; justify-content:center;
           font-family:Inter, system-ui, "Segoe UI", Arial, sans-serif; color:#5b668c; font-size:28px; }
@@ -156,7 +158,7 @@
     setTimeout(function () {
       $("ref").textContent = v.reference;
       $("text").textContent = v.text;
-      $("tr").textContent = v.translation || "";
+      $("tr").textContent = v.translation ? "(" + v.translation + ")" : "";   // shown as (KJV), (NIV) ...
       $("copy").textContent = v.copyright || "";
       removeClass(document.body, "empty");
       fit();
