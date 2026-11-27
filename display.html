@@ -12,7 +12,7 @@
      Until they load, Georgia is used. -->
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@500;600;700&family=Lora:wght@400;500;600&display=swap" rel="stylesheet" media="print"
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@500;600;700;800&family=Lora:wght@400;500;600&display=swap" rel="stylesheet" media="print"
       onload="this.media='all'; if (document.fonts && document.fonts.ready && window.fit) document.fonts.ready.then(window.fit);">
 <style>
   * { box-sizing:border-box; }
@@ -31,7 +31,7 @@
   body.bgblack { background-color:#000; background-image:none; }
 
   /* Everything is centered: the stage sits in the middle of the screen and its text is centered inside it. */
-  .stage { display:block; width:88vw; max-width:1500px; margin:0 auto; text-align:center; opacity:0; transition:opacity .25s ease; }
+  .stage { display:block; width:88vw; max-width:1500px; margin:0 auto; text-align:center; opacity:0; transition:opacity .08s ease; }
   .stage.show { opacity:1; }
 
   #ref { display:flex; align-items:center; justify-content:center; margin:0 0 .55em; color:#a9c0ff;
@@ -42,7 +42,7 @@
           font-family:Inter, system-ui, "Segoe UI", Arial, sans-serif; text-align:center; }
   .meta span { margin:3px 9px; }
   /* Translation label, shown like (KJV): bold and large so it can be read on the TV */
-  #tr { color:#c9d7ff; font-weight:700; font-size:3.6vh; letter-spacing:.02em; }
+  #tr { color:#c9d7ff; font-weight:800; font-size:3.6vh; letter-spacing:.02em; }
   #copy { color:#8d97b5; font-weight:500; font-size:1.4vh; max-width:70ch; }
 
   /* Lower third: sits at the bottom of the picture, centered.
@@ -163,7 +163,7 @@
       removeClass(document.body, "empty");
       fit();
       addClass(stage, "show");
-    }, 160);
+    }, 30);
   }
 
   function clearScreen() {
@@ -289,7 +289,7 @@
 
     var next = function () {
       // quick while the service is active, slower when nothing has changed for a while
-      setTimeout(poll, new Date().getTime() - lastChange < 30000 ? 600 : 1500);
+      setTimeout(poll, new Date().getTime() - lastChange < 30000 ? 300 : 1000);
     };
 
     var poll = function () {
